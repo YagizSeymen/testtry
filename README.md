@@ -162,15 +162,15 @@ Recommended axes:
 - `fundraising`: prior funding, round fit, valuation plausibility, investor signal.
 - `risk`: legal, regulatory, reputational, technical, concentration, execution risk.
 
-The weakest axis selects the adversary persona:
+The weakest axis selects the counter-case lens. This is not a personality or a debate role; it is just the area the single devil's advocate pass should stress-test most.
 
-- Weak `founder` -> `track_record_skeptic`
-- Weak `market` -> `market_skeptic`
-- Weak `product` -> `product_skeptic`
-- Weak `traction` -> `traction_skeptic`
-- Weak `business_model` -> `business_model_skeptic`
-- Weak `fundraising` -> `fundraising_skeptic`
-- Weak `risk` -> `risk_skeptic`
+- Weak `founder` -> focus the counter-case on founder risk.
+- Weak `market` -> focus the counter-case on market risk.
+- Weak `product` -> focus the counter-case on product risk.
+- Weak `traction` -> focus the counter-case on traction risk.
+- Weak `business_model` -> focus the counter-case on business-model risk.
+- Weak `fundraising` -> focus the counter-case on financing and round-fit risk.
+- Weak `risk` -> focus the counter-case on legal, regulatory, reputational, and execution risk.
 
 Tie-breaker order is: `risk`, `founder`, `traction`, `market`, `product`, `business_model`, `fundraising`. This keeps the system deterministic.
 
@@ -270,7 +270,7 @@ Input:
 - Final memo.
 - Screening scores.
 - All Memory records.
-- Deterministically selected adversary persona.
+- Deterministically selected counter-case lens.
 
 Output:
 
@@ -415,7 +415,7 @@ Every AI endpoint should be callable independently so failures are isolated and 
 3. Frontend shows live progress while crawler and evidence extraction run.
 4. Screening scores appear with weakest axis highlighted.
 5. Memo is generated from cited Memory.
-6. Devil's advocate report is generated using the weakest-axis persona.
+6. Devil's advocate report is generated using the weakest-axis counter-case lens.
 7. The truth-gap Judge badges each adversarial objection as `verified`, `unverified`, or `speculation`.
 8. Optional verdict brief summarizes the strongest verified objections for faster human review.
 9. Reviewer sees the final decision packet and approves/rejects the $100K check.

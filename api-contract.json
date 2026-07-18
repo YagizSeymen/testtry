@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "project": "the-vc-brain",
   "description": "Shared API contract for frontend, backend, and AI service collaboration.",
   "principles": [
@@ -65,15 +65,6 @@
       "current",
       "stale",
       "unknown"
-    ],
-    "adversary_persona": [
-      "track_record_skeptic",
-      "market_skeptic",
-      "product_skeptic",
-      "traction_skeptic",
-      "business_model_skeptic",
-      "fundraising_skeptic",
-      "risk_skeptic"
     ],
     "objection_badge": [
       "verified",
@@ -347,7 +338,7 @@
         "deal_id",
         "axis_scores",
         "weakest_axis",
-        "selected_adversary_persona"
+        "selected_counter_case_lens"
       ],
       "properties": {
         "deal_id": {
@@ -362,8 +353,8 @@
         "weakest_axis": {
           "$ref": "#/enums/screening_axis"
         },
-        "selected_adversary_persona": {
-          "$ref": "#/enums/adversary_persona"
+        "selected_counter_case_lens": {
+          "$ref": "#/enums/screening_axis"
         },
         "overall_score": {
           "type": "integer",
@@ -477,7 +468,7 @@
         "report_id",
         "deal_id",
         "memo_id",
-        "persona",
+        "counter_case_lens",
         "weakest_axis",
         "summary",
         "objections",
@@ -494,8 +485,8 @@
         "memo_id": {
           "type": "string"
         },
-        "persona": {
-          "$ref": "#/enums/adversary_persona"
+        "counter_case_lens": {
+          "$ref": "#/enums/screening_axis"
         },
         "weakest_axis": {
           "$ref": "#/enums/screening_axis"
@@ -850,17 +841,8 @@
       "job_failed"
     ]
   },
-  "deterministic_persona_selection": {
-    "rule": "Select the adversary persona from the weakest screening axis. If multiple axes tie, use the tie_breaker_order.",
-    "axis_to_persona": {
-      "founder": "track_record_skeptic",
-      "market": "market_skeptic",
-      "product": "product_skeptic",
-      "traction": "traction_skeptic",
-      "business_model": "business_model_skeptic",
-      "fundraising": "fundraising_skeptic",
-      "risk": "risk_skeptic"
-    },
+  "deterministic_counter_case_lens_selection": {
+    "rule": "Select the counter_case_lens from the weakest screening axis. If multiple axes tie, use the tie_breaker_order.",
     "tie_breaker_order": [
       "risk",
       "founder",
