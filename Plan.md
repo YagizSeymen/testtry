@@ -4,7 +4,17 @@
 
 Hack-Nation Challenge 2 — **The VC Brain: Deploying $100K Checks in 24 Hours** (Maschmeyer Group × MIT Clubs).
 
-This plan is the team architecture source of truth. The official challenge brief remains on the [architecture-plan branch](https://github.com/Moneeb-Hussain/venture-intelligence/blob/archi-plan/challenge2.pdf).
+### Document roles
+
+| Doc | Role |
+|-----|------|
+| **[`steps.md`](steps.md)** | **Build contract (source of truth)** — golden path, API shapes, pipeline rules, formulas, scope P0/P1/P2, lane ownership, 20-hour order |
+| **This `Plan.md`** | Architecture narrative — challenge framing, diagrams, component intent. Must not contradict `steps.md` |
+| [`challenge2.pdf`](challenge2.pdf) | Official challenge brief |
+
+**If this file and `steps.md` disagree on behavior, `steps.md` wins.**
+
+One-liner (from `steps.md`): live-sourced founders + inbound decks → one Memory → 3-axis screen → per-claim truth-gap check → evidence-linked memo → adversary + verify → **deterministic Decision Brief** → human approves the $100K.
 
 ---
 
@@ -15,12 +25,12 @@ This plan is the team architecture source of truth. The official challenge brief
 3. [Judging criteria and three pillars](#3-judging-criteria-and-three-pillars)
 4. [Architecture diagrams](#4-architecture-diagrams)
 5. [Component reference](#5-component-reference)
-6. [Evidence schema](#6-evidence-schema)
-7. [Bounded LLM pipeline](#7-bounded-llm-pipeline)
+6. [Evidence and claim shapes](#6-evidence-and-claim-shapes)
+7. [Bounded pipeline](#7-bounded-pipeline)
 8. [Investment memo requirements](#8-investment-memo-requirements)
 9. [Users](#9-users)
 10. [Non-goals](#10-non-goals)
-11. [Repo status and implementation notes](#11-repo-status-and-implementation-notes)
+11. [Build status and next steps](#11-build-status-and-next-steps)
 12. [Team pointers](#12-team-pointers)
 
 ---
@@ -30,20 +40,23 @@ This plan is the team architecture source of truth. The official challenge brief
 VentureIntelligence is a data- and AI-first venture investment **decision-support** system. It helps a human investor:
 
 - discover exceptional founders **before** they formally fundraise;
-- accept inbound applications (company name + pitch deck);
+- accept inbound applications (company name + pitch deck text);
 - collect and structure fragmented founder and company data;
-- screen opportunities on **independent** axes;
-- verify claims against evidence;
-- produce an evidence-backed investment memo and a skeptical counter-case;
+- screen opportunities on **three independent axes** (never averaged);
+- verify claims against Memory evidence;
+- produce an evidence-backed investment memo and a one-pass counter-case;
 - decide on a **$100K** check within **24 hours**.
 
-### In scope (MVP)
+### Scope ladder (aligned with `steps.md`)
 
-**Sourcing → Screening → Diligence → Decision**
+| Tier | In scope |
+|------|----------|
+| **P0** | Dashboard + query, founder profile, application flow (claims → axes → diligence → memo), decision queue + audit, reviewed scan cache + seeded fallback, 4 seeded decks, Founder Score with uncertainty band, thesis config (presets + small settings form) |
+| **Bonus** (after P0 stable) | Live GitHub + HN scan that **falls back** to the reviewed cache. Demo never depends on the network |
+| **P1** | Adversary endpoint, one batched verify call, deterministic Decision Brief |
+| **P2** | Red-team deck #5 (seeded prompt injection) |
 
-### Out of scope (MVP)
-
-Portfolio monitoring, fund operations, follow-on investing, and exits. Do not spend hackathon time designing UI for those stages.
+Challenge pipeline covered: **Sourcing → Screening → Diligence → Decision**.
 
 ---
 
@@ -53,75 +66,63 @@ Portfolio monitoring, fund operations, follow-on investing, and exits. Do not sp
 
 Strong founders are often missed because their work is fragmented across GitHub, Hacker News, hackathons, papers, websites, pitch decks, launches, and social profiles. Traditional sourcing favors networks, prior funding, and visibility.
 
-VentureIntelligence identifies promising founders from **observable execution evidence**, even when they have:
+VentureIntelligence identifies promising founders from **observable execution evidence**, even when they have no prior VC, network, accelerator, visibility, or exit. Cold-start is a first-class demo path (wide Founder Score band + “what would tighten this”), not an afterthought.
 
-- no prior institutional VC funding;
-- no established investor network;
-- no prestigious accelerator;
-- limited public visibility;
-- no previous startup exit.
+### Product story (build order)
 
-### Product story
-
-An investor defines a fund thesis, for example:
-
-> Find technical founders in Europe building AI infrastructure, with early enterprise traction, no previous institutional VC funding, and strong evidence of execution.
-
-The system then:
-
-1. interprets the thesis;
-2. searches public and uploaded sources;
-3. discovers potential founders;
-4. merges duplicate profiles;
-5. extracts evidence-backed signals;
-6. evaluates each opportunity on three independent axes;
-7. generates an investment memo;
-8. generates a skeptical counter-case;
-9. verifies the counter-case against the same evidence;
-10. presents memo and objections side by side;
-11. lets the human approve, reject, or request more evidence;
-12. records the complete decision trail.
+1. Investor sets / loads a **thesis** (one fund store).
+2. Dashboard shows founders from the **reviewed scan cache** (origin-tagged, Founder Score ± band, trend).
+3. NL query filters the list with why-matched chips.
+4. Investor opens a founder → evidence timeline → **Activate** → outreach **draft** (never sent).
+5. Inbound: upload deck text (`company_name` + deck) → claims with quoted `source_span`s.
+6. **Screen** on three independent axes through the thesis lens.
+7. **Diligence** (truth-gap judge): per-claim supported / contradicted / unverifiable + trust + gaps.
+8. **Memo** from committed claims only; recommendation cites `based_on` claim IDs.
+9. **Adversary** (P1): one pass → same judge re-verifies in one batch.
+10. **Decision Brief** (P1): deterministic, zero LLM — highlights contested claims; no winner declared.
+11. Human **approve** or **reject** → audit + signal-to-decision metrics.
 
 ### What we are not building
 
 | Not this | Instead |
 |----------|---------|
-| A swarm of agents debating endlessly | A small number of specialized LLM calls with clear jobs |
-| Autonomous investing | Human investor owns the final decision |
-| AI declaring memo vs adversary the “winner” | Side-by-side packet; optional non-authoritative brief only |
-| Generic “ChatGPT for investors” | Every important conclusion tied to evidence, confidence, gaps, and contradictions |
+| Agent debate swarm | Small number of specialized LLM calls + deterministic code gates |
+| Autonomous investing | Human gate only (`approve` / `reject`) |
+| AI declaring memo vs adversary the “winner” | Side-by-side memo + badges + deterministic Decision Brief |
+| Network-dependent demo | Reviewed cache P0; live scan is bonus with cache fallback |
+| Generic “ChatGPT for investors” | Every important conclusion tied to signals, claims, trust, gaps, contradictions |
 
 ---
 
 ## 3. Judging criteria and three pillars
 
-### Evaluation weights ([`challenge2.pdf`](challenge2.pdf))
+### Evaluation weights
 
-| Weight | Criterion | What judges look for |
-|--------|-----------|----------------------|
-| **30%** | Data Architecture & Intelligence | Smart ingest, dedupe, enrichment; honest about unknowns; **cold-start / pre-track-record** method |
-| **25%** | Intelligent Analysis & Trust | Decision-ready insights; **per-claim Trust Scores**; evidence + uncertainty |
-| **30%** | Investment Utility & Execution | A human could act within **24 hours**; signal → decision reliability |
-| **15%** | User Experience & Design | Notion-level approachability, Bloomberg-level depth |
+| Weight | Criterion | How this build maps (`steps.md`) |
+|--------|-----------|----------------------------------|
+| **30%** | Data Architecture & Intelligence | Ingest + dedup + Memory + cold-start + cache/synthetic provenance |
+| **25%** | Intelligent Analysis & Trust | Diligence judge + trust badges + verified adversary |
+| **30%** | Investment Utility & Execution | Memo + human gate + `signal_to_decision_min` stopwatch |
+| **15%** | UX | 4 clean screens + 30-second Decision Brief |
 
-**Priority hint from the brief:** go furthest on **sourcing / data**. A polished reasoner over shallow data scores poorly. Build sourcing deep, then a thin-but-transparent intelligence layer on top.
+**Priority:** sourcing / data first, then thin transparent intelligence — not a polished reasoner on shallow data.
 
 ### Three pillars
 
-1. **Sourcing** — Surface the strongest founders before fundraising. Highest MVP priority. Judged on data richness and smart sourcing ideas, not polish.
-2. **Assessment & Intelligence** — Reasoning on Memory: insights, challenged assumptions, next steps. Transparent about confidence and evidence. Triggered by inbound application or outbound conviction threshold.
-3. **Memory** — Nothing discarded. Deduplicate, enrich, timestamp, tag by source. Houses the **Founder Score** (persists across applications, never resets). Surfaces **trends**, not only the latest snapshot.
+1. **Sourcing** — Reviewed scan cache (P0) + optional live GitHub/HN (bonus); activate via outreach draft; same funnel as inbound.
+2. **Assessment & Intelligence** — Extract → screen → diligence → memo → (P1) adversary + verify + Decision Brief.
+3. **Memory** — SQLite Memory; nothing discarded; **Founder Score** persists across applications with uncertainty band and trend.
 
-### MVP must-haves
+### Challenge must-haves → build mapping
 
-1. **Thesis Engine** — Configurable sectors, stage, geography, check size, ownership targets, risk appetite. Every recommendation filtered through this lens.
-2. **Smart data collection** — Collect, validate, and structure founder/company data from heterogeneous sources.
-3. **Multi-attribute NL queries** — e.g. “technical founder, Berlin, AI infra, enterprise traction, no prior VC backing, top-tier accelerator” in one pass.
-4. **Inbound** — Minimum: deck + company name. Fast first-pass screen before full analysis.
-5. **Outbound** — Scan GitHub, launches, hackathons, papers/patents, accelerator cohorts; score like inbound; activate via outreach (not auto-invest); converge into the same Screening funnel.
-6. **3-axis screening (not averaged)** — Founder · Market · Idea vs Market; each with trend (improving / declining / stable); feeds Memory.
-7. **Evidence-backed memos + per-claim Trust Score** — Verify externally where possible; flag contradictions before they reach the investor.
-8. **Investor-grade UX** — Usable without technical support.
+1. **Thesis Engine** — One server-side thesis store; presets + settings (`sectors`, `stage`, `geo`, `check_size`, `risk_appetite`).
+2. **Smart data collection** — Cache / synthetic / deck `.txt`; source-tag and timestamp everything.
+3. **Multi-attribute NL query** — `POST /api/query` → `QueryFilter` + why-matched.
+4. **Inbound** — `company_name` + `deck_text` minimum.
+5. **Outbound** — Scan + activate (draft only); converge to screening.
+6. **3-axis screening (not averaged)** — See §5.5; Founder trend is deterministic from Founder Score history.
+7. **Evidence-backed memo + per-claim trust** — Diligence before memo; gaps flagged verbatim.
+8. **Investor-grade UX** — Four screens: Dashboard (+ query), Founder profile, Application flow, Decision queue (+ audit).
 
 ---
 
@@ -131,356 +132,303 @@ The system then:
 
 ```mermaid
 flowchart TB
-  Frontend[Frontend - intake progress memo decision]
-  Backend[Backend - jobs persistence APIs]
-  AIService[AI Service - specialized LLM stages]
-  Memory[Memory Store - evidence Founder Score audit]
+  Frontend[Frontend - 4 screens]
+  Backend[Backend - Memory orchestration APIs]
+  LLM[LLM lane - extract screen diligence memo adversary]
+  Memory[SQLite Memory - signals claims scores audit thesis]
 
   Frontend --> Backend
-  Backend --> AIService
+  Backend --> LLM
   Backend --> Memory
-  AIService --> Memory
+  LLM --> Memory
 ```
 
-### Diagram B — End-to-end pipeline
+### Diagram B — End-to-end pipeline (matches `steps.md`)
 
 ```mermaid
 flowchart TB
-  Sources[Sources: GitHub HN deck synthetic optional web]
-  Ingest[Ingestion Dedup Identity resolution]
+  Sources[Sources: reviewed cache synthetic deck txt]
+  Ingest[Ingest normalize identity]
   MemoryNode[Memory plus Founder Score]
-  Extract[Evidence Extraction]
-  Screen[Thesis-filtered 3-axis Screening plus trends]
-  Memo[Investment Memo]
-  Adv[Adversary one pass]
-  Judge[Truth-Gap and Trust verification]
-  Human[Human Decision]
-  Audit[Audit Log]
+  Extract[Extractor LLM1 claims plus source spans]
+  Screen[Screen LLM2 three axes]
+  Diligence[Diligence LLM3 per-claim truth-gap]
+  Memo[Memo LLM4]
+  Adv[Adversary LLM6 one pass P1]
+  Verify[Verify LLM3 batch P1]
+  Brief[Decision Brief deterministic zero LLM]
+  Human[Human gate approve or reject]
+  Audit[Audit plus metrics]
 
   Sources --> Ingest
   Ingest --> MemoryNode
   MemoryNode --> Extract
   Extract --> Screen
-  Screen --> Memo
+  Screen --> Diligence
+  Diligence --> Memo
   Memo --> Adv
-  Adv --> Judge
-  Judge --> Human
+  Adv --> Verify
+  Verify --> Brief
+  Brief --> Human
+  Memo --> Human
   Human --> Audit
-  Screen --> MemoryNode
 ```
 
 ### Diagram C — Inbound and outbound converge
 
 ```mermaid
 flowchart TB
-  Thesis[Thesis Engine]
-  Inbound[Inbound: deck plus company name]
-  Outbound[Outbound: discover score activate]
-  Screen[Shared Screening funnel]
-  Diligence[Diligence Memo Adversary Judge]
-  Decision[Human Decision]
+  Thesis[Thesis store one fund]
+  Inbound[Inbound company name plus deck text]
+  Outbound[Outbound cache scan activate draft]
+  AppFlow[Application flow screen diligence memo]
+  Gate[Decision queue human gate]
 
   Thesis --> Inbound
   Thesis --> Outbound
-  Inbound --> Screen
-  Outbound --> Screen
-  Screen --> Diligence
-  Diligence --> Decision
+  Inbound --> AppFlow
+  Outbound --> AppFlow
+  AppFlow --> Gate
 ```
 
-Outbound **activates** founders (outreach to trigger a real application). It does not auto-invest. Activated applications enter the same Screening step as inbound.
+Outbound **Activate** produces an outreach **draft** only — never sent. Both tracks feed the same application / screening funnel.
 
-### Diagram D — Memory and evidence provenance
+### Diagram D — Memory, Founder Score, and Founder axis
 
 ```mermaid
 flowchart LR
-  Raw[Raw sources with URL timestamp type]
-  Norm[Normalized evidence records]
-  FounderScore[Founder Score persistent across deals]
-  Opportunity[Per-opportunity 3-axis scores]
-  Consumers[Memo Adversary Judge UI]
+  Signals[Signals in Memory]
+  FounderScore[Founder Score 0-100 plus band]
+  FounderAxis[axes.founder 0-10 per opportunity]
+  OtherAxes[Market and Idea vs Market]
+  Consumers[Diligence Memo UI]
 
-  Raw --> Norm
-  Norm --> FounderScore
-  Norm --> Opportunity
-  Norm --> Consumers
-  FounderScore -->|"input to Founder axis"| Opportunity
+  Signals --> FounderScore
+  FounderScore -->|"one input"| FounderAxis
+  Signals --> FounderAxis
+  Signals --> OtherAxes
+  FounderAxis --> Consumers
+  OtherAxes --> Consumers
 ```
 
-**Founder Score ≠ 3-axis score.** Founder Score lives in Memory, follows the person across startups, and never resets. The 3-axis score is per opportunity. Founder Score is one input into the Founder axis, not a substitute for it.
+**Founder Score ≠ Founder axis.** Score is deterministic, 0–100, has `band`, follows the person. Axis is LLM judgment, 0–10, per opportunity, and takes Founder Score as one input. Full formula: see [`steps.md`](steps.md) §4 SIDE: FOUNDER SCORE.
 
 ### Diagram E — Three-axis screening (not averaged)
 
 ```mermaid
 flowchart TB
-  Evidence[Memory evidence]
-  FounderAxis[Founder axis: traits track record]
-  MarketAxis[Market axis: sizing competitors SWOT]
-  IdeaAxis[Idea vs Market: idea as-is or team can pivot]
-  Trends[Per-axis trend: improving declining stable]
-  MemoInputs[Feed memo separately - never collapse to one number]
-  MemoryFeedback[Write trends back to Memory]
+  Evidence[Memory signals plus Founder Score]
+  FounderAxis["Founder: score 0-10, trend up flat down"]
+  MarketAxis["Market: bullish neutral bear"]
+  IdeaAxis["Idea vs Market: survives pivot fails"]
+  Cards[Three cards never averaged]
+  MemoDiligence[Feed diligence and memo separately]
 
   Evidence --> FounderAxis
   Evidence --> MarketAxis
   Evidence --> IdeaAxis
-  FounderAxis --> Trends
-  MarketAxis --> Trends
-  IdeaAxis --> Trends
-  Trends --> MemoInputs
-  Trends --> MemoryFeedback
+  FounderAxis --> Cards
+  MarketAxis --> Cards
+  IdeaAxis --> Cards
+  Cards --> MemoDiligence
 ```
 
-Market axis rating: **bullish / neutral / bear**. Collapsing axes into one average hides the disagreement investors need to see.
+Founder **trend** is the deterministic Founder Score trend (`up` / `flat` / `down`), not a separate LLM invention. Axes are never collapsed into one number.
 
-### Diagram F — Bounded LLM pipeline
+### Diagram F — LLM vs deterministic stages
 
 ```mermaid
 flowchart LR
-  Plan[research.plan]
-  Extract[evidence.extract]
-  Screen[screen.score]
-  Memo[memo.write]
-  Adv[adversary.write]
-  Truth[truth_gap.verify]
-  Brief[verdict.brief optional]
-  Human[Human decision OUTSIDE graph]
+  E[LLM1 Extractor]
+  S[LLM2 Screen]
+  D[LLM3 Diligence]
+  M[LLM4 Memo]
+  Q[LLM5 Query NL to filter]
+  A[LLM6 Adversary P1]
+  V[LLM3 Verify batch P1]
+  B[Decision Brief code only]
+  H[Human outside graph]
 
-  Plan --> Extract --> Screen --> Memo --> Adv --> Truth --> Brief
-  Truth --> Human
-  Brief --> Human
+  E --> S --> D --> M --> A --> V --> B --> H
+  Q -.->|dashboard side path| H
 ```
 
-Human decision is **outside** the orchestration graph. No agent debate loop.
+Human decision is **outside** the graph. Decision Brief declares **no winner**.
 
-### Diagram G — Decision packet (side-by-side UX)
+### Diagram G — Decision packet (UX)
 
 ```mermaid
 flowchart TB
-  Packet[Decision Packet]
-  MemoView[Investment Memo]
-  CounterView[Counter-case with badges]
-  EvidenceView[Evidence browser]
-  Scores[3-axis scores plus trends]
-  BriefView[Optional non-authoritative brief]
-  Actions[Approve Reject Watchlist Request more evidence]
+  Packet[Decision surfaces]
+  MemoView[Memo plus trust badges]
+  DiligenceView[Diligence verdicts and gaps]
+  CounterView[Adversary plus verification P1]
+  BriefView[Decision Brief contested severities P1]
+  Actions[Approve or Reject]
 
   Packet --> MemoView
+  Packet --> DiligenceView
   Packet --> CounterView
-  Packet --> EvidenceView
-  Packet --> Scores
   Packet --> BriefView
   Packet --> Actions
 ```
 
-Objection badges from the truth-gap Judge: `verified` | `unverified` | `speculation`.
-
-### Diagram H — Target vs current implementation status
+### Diagram H — Doc and build alignment
 
 ```mermaid
 flowchart LR
-  subgraph target [Target architecture]
-    Src[Sourcing and Memory]
-    ThreeAxis[3-axis plus trends]
-    Trust[Per-claim Trust Score]
-    Thesis[Thesis Engine]
-    FounderScore[Persistent Founder Score]
-    FEBE[Frontend plus Backend]
-  end
-  subgraph today [yagiz AI MVP]
-    SourceMVP[Thesis sourcing plus bounded crawler]
-    ThreeAxisMVP[3-axis screening plus diagnostics]
-    TrustMVP[Per-claim trust plus Truth-Gap]
-    FounderMVP[File-backed Founder Memory]
-    Contract[Shared API contract v0.4]
-    NoFE[Frontend and durable backend pending]
-  end
-  Src --> SourceMVP
-  ThreeAxis --> ThreeAxisMVP
-  Trust --> TrustMVP
-  Thesis --> Contract
-  FounderScore --> FounderMVP
-  FEBE -.->|missing| NoFE
+  Challenge[challenge2.pdf]
+  Steps[steps.md build SSOT]
+  PlanDoc[Plan.md this file]
+  Code[backend frontend llm data]
+
+  Challenge --> Steps
+  Steps --> PlanDoc
+  Steps --> Code
+  PlanDoc -.->|must not contradict| Steps
 ```
 
 ---
 
 ## 5. Component reference
 
-### 5.1 Ingestion layer
+Details and invariants live in [`steps.md`](steps.md). Summary only here.
 
-Collects from:
+### 5.1 Ingestion and sources (P0)
 
 | Source | Role |
 |--------|------|
-| GitHub API | Repos, releases, stars, activity (execution evidence) |
-| Hacker News API | Launches, discussion signals |
-| Uploaded pitch decks | Inbound claims to verify |
-| Synthetic founder profiles | Demo / seeded contradictions |
-| Optional | Company websites, Product Hunt, arXiv, hackathon pages |
+| Reviewed scan cache | Primary outbound seed for dashboard (demo-safe) |
+| Synthetic signals | Hand-written evidence; UI must show `source: "synthetic"` |
+| Deck `.txt` uploads | Inbound claims; treat as untrusted data, never as instructions |
+| Live GitHub + HN | **Bonus** after cache fallback proven |
 
-Responsibilities:
-
-- capture raw content;
-- assign source ID;
-- retain source URL and timestamps;
-- identify source type;
-- store raw and normalized content;
-- never silently discard source data.
-
-Every evidence item must have **provenance**.
-
-Crawler guardrails:
-
-- Respect robots and rate limits.
-- Store source URLs and timestamps.
-- Preserve canonical URL, content hash, source channel, and published time when available.
-- Deduplicate identical or near-identical content.
-- Prefer primary sources.
-- Label stale or low-confidence evidence.
-- Never let a crawler summary replace source-backed Memory.
+Identity: person-based. `normalized(name)` = lowercase, strip spaces and punctuation. Same founder iff normalized names match. URL domain may confirm but never overrides a name mismatch. Never key identity by `company_name`.
 
 ### 5.2 Thesis Engine
 
-Investor-configurable:
+One server-side store for one fund:
 
-- sectors / themes;
-- stage;
-- geography;
-- check size;
-- ownership targets;
-- risk appetite.
+```text
+Thesis = {sectors, stage, geo, check_size: 100000, risk_appetite: low|medium|high}
+```
 
-Every recommendation is filtered and scored through this fund-specific lens. Hardcoding a single thesis misses the point of the pillar.
-
-Supports multi-attribute natural-language queries resolved in one pass (not five manual filters).
+Dashboard, query, and screen load thesis server-side. Clients do not resend thesis on those reads. Screen audits the exact thesis snapshot used.
 
 ### 5.3 Memory and Founder Score
 
-Memory is the shared source of truth between all LLM stages and the UI.
+SQLite Memory: founders, signals, claims, scores, memos, decisions, audit, thesis.
 
-Rules:
+Founder Score (deterministic, persisted):
 
-- The memo cannot make uncited factual claims.
-- The adversary cannot invent facts.
-- Every adversarial objection must cite an `evidence_id` or be labeled `speculation`.
-- Speculation is allowed only as risk reasoning, not as a factual assertion.
-- The truth-gap Judge badges objections with missing, irrelevant, or contradicted evidence as `unverified`.
+- Inputs: signal count, source diversity, signals in last 30 days
+- Output: `founder_score` 0–100, uncertainty `band`, trend `up|flat|down`
+- Formula and golden-test rules: [`steps.md`](steps.md) §4
 
-**Founder Score:** a living profile of skills, experience, and track record that gets sharper with every milestone — a credit score for founders. Produced by the system, persisted across applications, used as one input into every investment decision (especially the Founder axis).
+### 5.4 Extractor and per-claim trust
 
-### 5.4 Evidence extraction and Trust Score
+**Extractor (LLM#1):** typed claims + exact quoted `source_span` from deck text. Missing/mismatched span → one retry → else `source_span: null`. Null-span claims cannot be `supported` or appear in `recommendation.based_on`.
 
-Evidence Extractor converts crawled or uploaded content into structured Memory records.
+**Diligence (LLM#3):** per claim vs Memory:
 
-**Trust Score is per claim**, not one company-level number. Each assertion (traction, revenue, team background, market size) traces to evidence with a confidence level, verified externally where possible, with contradictions flagged before they reach the investor.
+| Verdict | Trust mapping (after ID resolution) |
+|---------|-------------------------------------|
+| supported + ≥2 evidence | high |
+| supported + 1 evidence | med |
+| supported + 0 / unverifiable | low (supported+0 → unverifiable) |
+| contradicted | low (requires ≥1 contrary evidence ID) |
 
-### 5.5 Screening (target: 3 axes)
+Gaps flagged explicitly (e.g. `"Cap table: not disclosed"`).
 
-| Axis | Meaning |
-|------|---------|
-| **Founder** | Who they are, traits, track record; Founder Score is one input |
-| **Market** | Sizing, competitors, SWOT → bullish / neutral / bear |
-| **Idea vs Market** | Does the idea survive as-is, or is the team strong enough to pivot? |
+### 5.5 Screening (3 axes)
 
-Each axis shows **trend** (improving / declining / stable) and feeds back into Memory.
-
-Cold-start method must be explicit: pre-track-record founders need a defined scoring path (public footprint, execution artifacts, deck claims under verification) — otherwise the system rebuilds the network-gated status quo.
-
-### 5.6 Investment memo
-
-See [§8](#8-investment-memo-requirements). Memo Writer produces the strongest **honest** invest case supported by Memory, with citations.
-
-### 5.7 Adversary and Judge
-
-**Adversary (one pass):** strongest case against investing, focused by the weakest screening signal. Constraints: one pass only; no arguing back; no new crawling; no invented facts; every objection evidence-backed or explicitly `speculation`.
-
-**Truth-gap Judge:** badges each objection `verified` | `unverified` | `speculation`. Treats objections as claims against Memory, not as a debate partner.
-
-**Optional verdict brief:** short, non-authoritative summary of whether verified objections look decision-changing. Must not declare the final decision.
-
-### 5.8 Audit log
-
-Records reviewer identity, timestamp, decision (`approve` / `reject` / `watchlist` / `needs_more_research`), notes, and references to the decision packet version used.
-
----
-
-## 6. Evidence schema
-
-Example evidence object (provenance-first):
-
-```json
-{
-  "evidence_id": "ev_001",
-  "founder_id": "founder_001",
-  "source_type": "github",
-  "source_url": "https://github.com/example/project",
-  "source_title": "Example Project",
-  "observed_at": "2026-07-19T12:00:00Z",
-  "published_at": "2026-07-12T00:00:00Z",
-  "content": "Repository has 24 releases and 410 stars.",
-  "credibility": 0.9
+```text
+Axes = {
+  founder: {score 0-10, trend up|flat|down, rationale},
+  market: {rating bullish|neutral|bear, rationale},
+  idea_vs_market: {verdict survives|pivot|fails, rationale}
 }
 ```
 
-Normalized Memory fields used across stages (aligned with the AI contract direction):
+Never averaged. Weakest axis (rank rules in `steps.md`) selects adversary persona (P1).
 
-| Field | Purpose |
-|-------|---------|
-| `evidence_id` | Stable ID (e.g. `ev_001`) |
-| `founder_id` / `deal_id` | Who / which opportunity |
-| `source_url` / `source_title` | Provenance |
-| `observed_at` / `published_at` / `captured_at` | Freshness |
-| `claim` / `content` / `quote` | Normalized fact + supporting snippet |
-| `evidence_type` | company, founder, market, traction, competition, fundraising, risk, unknown |
-| `confidence` / `credibility` | Trust signal |
-| `freshness` | current, stale, or unknown |
+### 5.6 Investment memo
+
+LLM#4 writes prose around **committed** diligence claims; never rewrites facts; gaps verbatim; `based_on` only supported claims with valid spans. See §8.
+
+### 5.7 Adversary, verify, Decision Brief (P1)
+
+- **Adversary (LLM#6):** one pass; persona from weakest axis; objections target `claim_id`s; evidence-backed or speculation.
+- **Verify:** same diligence judge, **one batch**; badges `verified` | `unverified` | `n/a`.
+- **Decision Brief:** **deterministic, zero LLM.** Severity: red / yellow / dim from verified attacks vs `based_on` claims. Summary template fixed in `steps.md`. No AI winner.
+
+### 5.8 Audit and metrics
+
+Every stage timestamped. Human status: `open` | `approved` | `rejected`.  
+`signal_to_decision_min`: median minutes from first Memory signal to human decision. Funnel counts in `GET /api/metrics`.
 
 ---
 
-## 7. Bounded LLM pipeline
+## 6. Evidence and claim shapes
 
-Specialized stages (callable independently for isolation and demos):
+Canonical shapes: [`steps.md`](steps.md) §3. Summary:
 
-| Stage | Job |
-|-------|-----|
-| `research.plan` | Search queries, target URLs, priorities, expected evidence types |
-| `research.crawl` | Fetch pages (workers); raw text + metadata → Memory via extract |
-| `evidence.extract` | Pages → structured evidence records |
-| `screen.score` | 3-axis scores, rationales, missing evidence, trends, weakest axis |
-| `memo.write` | Evidence-cited investment memo + recommendation |
-| `adversary.write` | One-pass counter-case with citations or speculation labels |
-| `truth_gap.verify` | Badge each objection; contradiction / relevance checks |
-| `verdict.brief` | Optional non-authoritative reviewer brief |
-| `packet.build` | Final reviewer-ready decision packet |
+```text
+Signal = {signal_id, ts, source, text, url: str | null}
+Claim  = {claim_id, type: traction|team|market|product, text, source_span: str | null}
+```
 
-Truth-gap Judge rules (summary):
+Example signal (provenance-first):
 
-- Evidence supports objection → `verified`
-- Cited evidence does not support → `unverified`
-- Factual claim without evidence → `unverified` (unless clearly speculation)
-- Risk reasoning from missing/weak evidence → `speculation`
-- Contradicts stronger Memory evidence → `unverified` + cite contradiction
+```json
+{
+  "signal_id": "sig_001",
+  "ts": "2026-07-12T00:00:00Z",
+  "source": "synthetic",
+  "text": "Pre-revenue; no disclosed MRR in public HN-style thread.",
+  "url": null
+}
+```
+
+Frontend must render synthetic provenance even when a founder has mixed sources.
+
+---
+
+## 7. Bounded pipeline
+
+| Stage | Owner | Notes |
+|-------|--------|------|
+| Sources → Ingest → Memory | Backend (deterministic) | Identity + provenance |
+| Extractor | LLM#1 | Claims + spans |
+| Screen | LLM#2 | 3 axes + thesis lens |
+| Diligence | LLM#3 | Per-claim truth-gap |
+| Memo | LLM#4 | Required sections + `based_on` |
+| Query | LLM#5 | NL → `QueryFilter` (side path) |
+| Adversary | LLM#6 (P1) | One pass |
+| Verify | LLM#3 batch (P1) | Same judge |
+| Decision Brief | **Code only (P1)** | Zero LLM |
+| Human gate | Backend + UI | approve / reject |
+| Audit + metrics | Backend | Stopwatch + funnel |
+
+API endpoints and invariants: [`steps.md`](steps.md) §3–4. Do not invent a second product API in this file.
 
 ---
 
 ## 8. Investment memo requirements
 
-Length rule: as detailed as the decision requires, as brief as clarity allows. Padding counts against you.
+Length: as detailed as the decision requires; padding counts against you.
 
-**Required sections** (challenge appendix):
+**Required sections** (challenge appendix ↔ `Memo.sections`):
 
-| Section | Should include |
-|---------|----------------|
-| Company snapshot | One-paragraph nutshell: market size, structural problem, urgency, how the product solves it |
-| Investment hypotheses | Explicit “why invest” bullets (team, wedge, stickiness, traction, defensibility, expansion) |
-| SWOT | Strengths, weaknesses, opportunities, risks — short, evidence-backed bullets |
-| Problem & product | Core problem(s) in plain language; step-by-step product/process |
-| Traction & KPIs | Customers, ARR/revenue, growth, unit economics, usage metrics |
+| Section key | Content |
+|-------------|---------|
+| `snapshot` | Company nutshell |
+| `hypotheses` | Why invest bullets |
+| `swot` | Evidence-backed SWOT |
+| `problem_product` | Problem + product |
+| `traction_kpis` | Traction and KPIs |
 
-Where data is missing (financials, cap table, etc.): **flag explicitly** (e.g. “Cap table: not disclosed”). Do not fabricate. A memo that marks its own gaps is more trustworthy.
-
-Other appendix sections (team & history, technology, market sizing, competition, financials, cap table, DD log, exit) are welcome when evidence exists, optional when it does not.
+Missing data: flag explicitly. Do not fabricate. Null-span / unsupported claims must not drive `invest: true`.
 
 ---
 
@@ -488,104 +436,53 @@ Other appendix sections (team & history, technology, market sizing, competition,
 
 ### Investor (primary)
 
-- Define thesis;
-- discover overlooked founders;
-- review inbound applications;
-- understand why a founder was surfaced;
-- inspect supporting evidence;
-- compare strengths, risks, and contradictions;
-- decide within 24 hours.
+Thesis, dashboard/query, founder evidence, activate (draft), application diligence/memo, decision queue, audit.
 
 ### Founder
 
-- Submit company name;
-- upload pitch deck;
-- optionally provide key public links;
-- enter the **same funnel** as outbound-discovered founders.
+Submit `company_name` + deck text; enter the same funnel as outbound-activated founders.
 
 ---
 
 ## 10. Non-goals
 
-- Portfolio monitoring, follow-on, fund ops, or exit workflows in the MVP.
-- Open-ended multi-agent debate or consensus loops.
-- Autonomous capital deployment without human approval.
-- AI declaring a final winner between memo and adversary.
-- Over-collecting founder application fields beyond what a confident 24-hour decision needs (minimum: deck + company name).
+From `steps.md` OUT — do not build:
+
+- Real outreach sending
+- LinkedIn / Crunchbase scraping
+- Auth, payments
+- Portfolio / follow-on / fund ops / exit stages
+- Sourcing-graph learning loop
+- Multi-fund, mobile, streaming UI
+- Debate loops or any AI “who won” verdict
+- PDF parsing if it fights back (decks ship as `.txt`)
+
+Also out of challenge MVP: treating the North Star “fund that runs itself” as a deliverable.
 
 ---
 
-## 11. Repo status and implementation notes
+## 11. Build status and next steps
 
-### Branch roles
+### Source of truth for implementation
 
-| Branch / path | Role |
-|---------------|------|
-| `archi-plan` (this README) | Architecture source of truth |
-| `origin/yagiz` | Existing AI service + `api-contract.json` |
-| `challenge2.pdf` | Official challenge brief |
+Proceed against **[`steps.md`](steps.md)** — especially §3 API, §4 pipeline, §5 data, §6 lanes, §7 20-hour order.
 
-### What exists on `yagiz`
+### Suggested 20-hour order (from `steps.md`)
 
-```text
-README.md              # Product and architecture documentation
-api-contract.json      # Shared v0.4 FE/BE/AI contract
-ai_service/
-  core.py              # Deterministic stage logic, trust and 3-axis scoring
-  crawler.py           # Bounded public-web crawler
-  sourcing.py          # Thesis planning, discovery and ranking
-  memory.py            # File-backed Founder Memory MVP
-  runtime.py           # Stage wrappers
-  model_router.py      # Optional OpenAI routing
-  orchestration.py     # LangGraph diligence DAG (+ sequential fallback)
-  sourcing_orchestration.py # LangGraph sourcing DAG
-  server.py            # HTTP /v1/ai/* on :8001
-  tests/ examples/
-```
-
-Implemented AI HTTP stages include `sourcing.plan`, `research.crawl`,
-`sourcing.discover`, `sourcing.rank`, `sourcing.run`, `founders.memory.*`,
-`research.plan`, `evidence.extract`, `evidence.verify`, `screen.score`,
-`memo.write`, `adversary.write`, `truth_gap.verify`, and `verdict.brief`.
-
-The `0.4.0` contract now defines versioned theses, a pre-deal `SourcingJob`,
-candidate lifecycle and activation, provisional founder identity references,
-source provenance, normalized Memory claims, human decision audit records, and
-source-channel outcome feedback. Every AI endpoint has a typed request and
-response schema.
-
-### Remaining gaps vs this target architecture
-
-| Target | Current state |
-|--------|-----------------|
-| Thesis-driven outbound sourcing | AI MVP is implemented; direct GitHub/HN/accelerator adapters remain future enrichment work |
-| Persistent Memory DB + Founder Score | File-backed AI MVP implemented; backend must own durable multi-user storage and reviewed identity merges |
-| **3-axis** screening + trends | Implemented; supporting diagnostics remain visible but are not averaged |
-| Challenge memo sections (SWOT, etc.) | Implemented with explicit data gaps and diligence log |
-| Per-claim Trust Score + external verify | Implemented; deterministic mode has heuristic contradiction detection, while model-backed mode requires external source review |
-| Frontend + Backend orchestration | Contract ready; frontend, durable backend, jobs, activation/outreach, and human decision persistence remain to be built |
-
-**Alignment rule going forward:** implement and document against the **3-axis +
-Memory + sourcing** target in this README. The remaining work is operational
-ownership and source-depth, not a redesign of the bounded decision pipeline.
-
-### Suggested demo flow
-
-1. Investor sets thesis (or uses a demo thesis).
-2. Inbound: company name + deck — or outbound: discovered founder activated into the funnel.
-3. Research / ingest runs; evidence appears with provenance.
-4. 3-axis scores and trends appear (not averaged).
-5. Memo generated from cited Memory (required sections + explicit gaps).
-6. One-pass adversary + truth-gap badges.
-7. Optional brief; human approves / rejects / requests more evidence; audit log written.
+1. Freeze the contract; load canonical fixtures in the frontend.
+2. Complete the cached, seeded vertical slice through human decision + audit.
+3. Verify clean, contradiction, and cold-start golden paths.
+4. Add live scan only after cache fallback is proven.
+5. Add adversary → batched verify → deterministic brief (P1).
+6. Add prompt-injection deck (P2) only after the demo is stable.
 
 ### Success criteria
 
-- A judge can understand why the system surfaces or recommends a founder.
-- Every important factual claim has a source and a Trust signal.
-- Cold-start founders have an explicit evaluation path.
-- Counter-case is strong but bounded; Judge catches unsupported attacks.
-- Human remains the final authority on the $100K decision.
+- Judges see why a founder was surfaced and how trust was assigned.
+- Contradiction and cold-start paths are explicit and demoable offline.
+- Counter-case is bounded; Decision Brief does not decide.
+- Human remains the only authority on the $100K check.
+- `signal_to_decision_min` is visible for utility scoring.
 
 ---
 
@@ -593,18 +490,19 @@ ownership and source-depth, not a redesign of the bounded decision pipeline.
 
 | Resource | Location |
 |----------|----------|
-| This architecture doc | [`README.md`](README.md) (you are here) |
+| **Build contract (SSOT)** | [`steps.md`](steps.md) |
+| Architecture narrative | [`Plan.md`](Plan.md) (this file) |
 | Challenge brief | [`challenge2.pdf`](challenge2.pdf) |
-| AI service + contract | Branch `yagiz` / `origin/yagiz` — `ai_service/`, `api-contract.json` |
+| Seeds / fixtures / prompts | `/data`, `/prompts`, `/eval` (per `steps.md` lanes) |
+| AI helpers (optional lane) | `ai_service/` — must conform to `steps.md` product API when wired |
 
-### Parallel work
+### Lane ownership (from `steps.md`)
 
-- **Frontend** — intake, progress, evidence browser, 3-axis dashboard, memo vs counter-case, decision actions.
-- **Backend** — versioned theses, sourcing jobs, candidates, durable Memory and identity merge review, activation/outreach, deals, jobs, packet assembly, human audit, source outcomes.
-- **AI / data** — bounded crawling, source adapters, extraction, Trust validation, Thesis Engine, 3-axis screen, memo, adversary, truth-gap, and model-backed web discovery.
-
-Use a shared API contract so FE, BE, and AI can develop against the same schemas.
+- **Lane 1 — Backend:** sqlite Memory, ingest/dedup, Founder Score, orchestration endpoints, decision gate, audit/metrics, Decision Brief builder
+- **Lane 2 — LLM + fetchers:** fetchers/cache, LLM wrapper, calls #1–#5, then adversary (#6) + batched verify
+- **Lane 3 — Frontend:** 4 screens, mock-first from `/data/fixtures`
+- **Docs / seeds / eval:** prompts, golden set, fixtures, video, README
 
 ---
 
-*VentureIntelligence — evidence first, human decides.*
+*VentureIntelligence — evidence first, human decides. Build from `steps.md`.*
