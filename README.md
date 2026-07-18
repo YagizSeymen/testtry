@@ -2,6 +2,8 @@
 
 An AI-assisted venture screening system for the challenge **"The VC Brain: Deploying $100K Checks in 24 Hours"**.
 
+The detailed architecture plan is in [`Plan.md`](Plan.md); the executable cross-team boundary is [`api-contract.json`](api-contract.json).
+
 The product helps a human investment reviewer discover exceptional founders before fundraising, accept inbound applications, and move either path to an evidence-backed memo, a bounded counter-case, and a final human approval decision. It does **not** autonomously invest. It accelerates sourcing, research, screening, and memo preparation while keeping the $100K deployment decision human-approved.
 
 ## Core Idea
