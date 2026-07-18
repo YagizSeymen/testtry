@@ -12,6 +12,7 @@ import hashlib
 import ipaddress
 import os
 import socket
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
@@ -20,6 +21,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.robotparser import RobotFileParser
 
+import certifi
+
 from .core import now_iso, stable_id
 
 
@@ -27,6 +30,7 @@ USER_AGENT = "VCBrainResearchBot/0.1 (+https://example.com/research)"
 MAX_URLS = 12
 MAX_BYTES = 1_000_000
 MAX_TEXT_CHARS = 60_000
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def source_channel_for(kind: str) -> str:
@@ -119,7 +123,7 @@ class PublicWebCrawler:
 
         request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain"})
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with urlopen(request, timeout=self.timeout_seconds, context=SSL_CONTEXT) as response:
                 final_url = response.geturl()
                 validate_public_url(final_url)
                 content_type = response.headers.get_content_type()
@@ -160,7 +164,10 @@ class PublicWebCrawler:
         parser = RobotFileParser()
         parser.set_url(robots_url)
         try:
-            parser.read()
+            request = Request(robots_url, headers={"User-Agent": USER_AGENT, "Accept": "text/plain"})
+            with urlopen(request, timeout=self.timeout_seconds, context=SSL_CONTEXT) as response:
+                raw = response.read(256_000).decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+            parser.parse(raw.splitlines())
         except Exception:
             # A missing/unavailable robots file is not an instruction to block.
             return True
