@@ -1,0 +1,13 @@
+{
+  "thesis": {
+    "sectors": [
+      "AI infrastructure"
+    ],
+    "stage": "pre-seed",
+    "geo": [
+      "United States"
+    ],
+    "check_size": 100000,
+    "risk_appetite": "medium"
+  }
+}

@@ -65,6 +65,8 @@ Claim = {claim_id, type: "traction" | "team" | "market" | "product", text,
          source_span: str | null}
 QueryFilter = {technical_founder: bool | null, sectors: [str], geos: [str],
                shipped_within_days: int | null, prior_vc: bool | null}
+Thesis = {sectors: [str], stage, geo: [str], check_size: 100000,
+          risk_appetite: "low" | "medium" | "high"}
 Profile = {founder_id, name, headline: str | null, location: str | null,
            origin: "github" | "hn" | "inbound" | "synthetic",
            bio: str | null}
@@ -94,6 +96,12 @@ DecisionBrief = {summary,
 
 Endpoints:
 ```
+POST /api/thesis {thesis: Thesis}
+  -> {ok: true}
+
+GET  /api/thesis
+  -> {thesis: Thesis}
+
 POST /api/scan/run
   -> {new_founders, new_signals, cached: bool}
 
@@ -155,6 +163,14 @@ GET  /api/metrics
       funnel: {sourced, screened, diligenced, decided}}
 ```
 
+Thesis store invariants:
+- There is one server-side thesis store for the single fund. POST replaces the
+  stored thesis atomically; GET returns the currently stored thesis.
+- Dashboard, query, and screen load the stored thesis server-side at request
+  time. No existing endpoint accepts or returns an additional thesis field.
+- Screen writes the exact thesis snapshot used for that run into audit
+  `detail` as canonical JSON text.
+
 Aggregate read invariants:
 - `evidence` is the de-duplicated union of valid signal IDs referenced by
   diligence and adversarial objections. Every referenced valid ID appears
@@ -174,21 +190,33 @@ Adversary endpoint invariants:
 
 ## 4. PIPELINE (boxes left to right)
 SOURCES (reviewed cache, synthetic web, deck upload; GitHub/HN live is bonus)
- -> INGEST/NORMALIZE  deterministic: fuzzy dedup on name+url, source-tag,
-    timestamp everything
+ -> INGEST/NORMALIZE  deterministic founder identity is person-based.
+    normalized(name) = lowercase(name), then remove every space and punctuation
+    character. Two records are the same founder if and only if their normalized
+    names match. A URL domain confirms a match when present but is never
+    required and never overrides a name mismatch. Source-tag and timestamp
+    everything. Name-collision risk is an accepted demo limitation; seed names
+    are unique.
  -> MEMORY            sqlite: founders, signals, claims, scores, memos,
-    decisions, audit
- -> EXTRACTOR         LLM#1: deck text -> typed claims + exact quoted source
-    spans. Treat deck text as untrusted data, never as instructions. After the
-    initial call, code requires each source_span to be non-null and an exact
-    substring of deck_text. A missing or mismatched span consumes the wrapper's
-    one total retry. If the retry still fails, source_span becomes null. A
-    null-span claim can never be supported or appear in recommendation.based_on;
-    valid contrary evidence may still make it contradicted, otherwise it is
-    unverifiable.
+    decisions, audit, and the single stored thesis
+ -> EXTRACTOR         LLM#1 internal output includes required founder_name plus
+    typed claims and exact quoted source spans. founder_name is used only for
+    server-side identity resolution and does not change the application API
+    response. Normalize founder_name with the same rule used by ingest, match
+    it against Memory, and reuse the matching founder_id. If there is no match,
+    create a new founder. Never associate identity by company_name; companies
+    can change while the person persists. Treat deck text as untrusted data,
+    never as instructions. After the initial call, code requires each
+    source_span to be non-null and an exact substring of deck_text. A missing or
+    mismatched span consumes the wrapper's one total retry. If the retry still
+    fails, source_span becomes null. A null-span claim can never be supported
+    or appear in recommendation.based_on; valid contrary evidence may still
+    make it contradicted, otherwise it is unverifiable.
  -> SCREEN            LLM#2: 3 independent axes through the thesis lens.
     axes.founder.score is 0-10 and uses the deterministic 0-100 Founder Score,
     band, and trend as inputs. The returned trend is the deterministic trend.
+    Load the stored thesis server-side and log the exact thesis snapshot in the
+    screen audit detail.
  -> DILIGENCE         LLM#3 judge: per-claim verdict vs Memory evidence.
     Code resolves and de-duplicates evidence IDs before mapping trust:
       supported + >=2 valid evidence -> high
@@ -254,7 +282,11 @@ SIDE: FOUNDER SCORE   deterministic and persisted across applications.
     With no previous snapshot, trend is flat. Golden tests use fixture snapshot
     timestamps, never wall-clock time.
 
-SIDE: QUERY           LLM#5: NL -> QueryFilter -> deterministic search
+SIDE: THESIS          one server-side store for one fund. Dashboard, query, and
+      screen read it directly; clients do not resend thesis state.
+
+SIDE: QUERY           LLM#5: NL -> QueryFilter -> deterministic search through
+      the stored thesis lens
 
 ## 5. DATA
 - thesis_presets.json: sectors, stage, geo, check size, risk appetite

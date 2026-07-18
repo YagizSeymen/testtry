@@ -15,6 +15,9 @@ responses:
 `post_application_adversary.json` contains the adversarial result and the
 deterministic Decision Brief.
 
+`post_thesis.json` is the successful write response. `get_thesis.json` is the
+stored single-fund thesis returned to the client.
+
 The founder fixture has six de-duplicated signals, one normalized source, and
 one signal in the snapshot's last 30 days. The frozen formulas therefore yield
 Founder Score 59 and band 22.

@@ -10,7 +10,16 @@ Stack: Next.js 14 + Tailwind + shadcn (frontend) | FastAPI + SQLite (backend).
 
 Rules:
 - `steps.md` section 3 is the single source of truth for API shapes. NEVER
-  change a request or response shape silently — propose it to Yuning first.
+  mutate an existing request or response shape. Additive endpoints require
+  Yuning's explicit approval and must be added to the contract and fixtures.
+- Thesis is one server-side store for one fund. Dashboard, query, and screen
+  read it server-side; screen records the exact thesis snapshot in audit detail.
+- Founder identity follows the person, never the company. Normalize names by
+  lowercasing and removing spaces and punctuation; equal normalized names are
+  the same founder. URL domain is confirming only and is never required.
+- The extractor's internal JSON includes required `founder_name`. Application
+  creation resolves that name against Memory and creates a founder only when no
+  normalized-name match exists. The public application API shape does not change.
 - All model calls go through `backend/llm/wrapper.py`: temperature=0, JSON mode,
   and at most one total retry for invalid JSON or schema output. Extractor
   exact-span validation consumes that same retry budget. No inline prompts.
