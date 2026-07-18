@@ -17,8 +17,11 @@ LUNA_MODEL = "gpt-5.6-luna"
 TERRA_MODEL = "gpt-5.6-terra"
 
 MODEL_BY_STAGE = {
+    "sourcing_plan": LUNA_MODEL,
+    "candidate_discovery": LUNA_MODEL,
     "research_plan": LUNA_MODEL,
     "evidence_extract": LUNA_MODEL,
+    "evidence_verify": TERRA_MODEL,
     "screen_score": TERRA_MODEL,
     "memo_write": TERRA_MODEL,
     "adversary_write": TERRA_MODEL,
@@ -27,8 +30,11 @@ MODEL_BY_STAGE = {
 }
 
 STAGE_INSTRUCTIONS = {
+    "sourcing_plan": "Decompose an investment thesis into focused, public-web research queries. Do not rank companies or make an investment recommendation.",
+    "candidate_discovery": "Find source-backed founder and company leads for the thesis. Retain only claims tied to web citations. Never infer no funding from an absence of results.",
     "research_plan": "Generate focused research queries and public target URLs. Do not make an investment recommendation.",
     "evidence_extract": "Extract only source-backed claims. Preserve exact supporting quotes and mark uncertainty rather than guessing.",
+    "evidence_verify": "Check each claim against the supplied Memory corpus. Preserve per-claim Trust Scores, flag direct contradictions, and do not invent corroboration.",
     "screen_score": "Assess the supplied evidence. Be explicit about uncertainty and missing evidence. Do not invent facts.",
     "memo_write": "Write an evidence-backed investment memo. Every factual claim must reference supplied evidence IDs. Flag data gaps explicitly.",
     "adversary_write": "Write one bounded counter-case against the memo. Do not debate or add facts. Every objection needs evidence IDs or an explicit speculation label.",

@@ -21,7 +21,14 @@ class CorePipelineTest(unittest.TestCase):
         screening = core.endpoint_screen_score({"deal": DEAL, "evidence": evidence})
         self.assertEqual(screening["deal_id"], DEAL["deal_id"])
         self.assertIn(screening["weakest_axis"], core.SCREENING_AXES)
+        self.assertIn(screening["weakest_opportunity_axis"], core.OPPORTUNITY_AXES)
         self.assertEqual(screening["selected_counter_case_lens"], screening["weakest_axis"])
+        self.assertEqual({item["axis"] for item in screening["opportunity_axes"]}, {"founder", "market", "idea_market"})
+        self.assertNotIn("overall_score", screening)
+
+        evidence_validation = core.endpoint_evidence_verify({"deal": DEAL, "evidence": evidence})
+        evidence = evidence_validation["evidence"]
+        self.assertTrue(all("trust_score" in item for item in evidence))
 
         memo = core.endpoint_memo_write(
             {"deal": DEAL, "evidence": evidence, "screening": screening}
@@ -61,6 +68,8 @@ class CorePipelineTest(unittest.TestCase):
         )
         self.assertIn(brief["signal"], {"memo_still_strong", "counter_case_serious", "needs_human_diligence"})
         self.assertIn("human reviewer", brief["summary"])
+        self.assertIn("swot", memo)
+        self.assertIn("diligence_log", memo)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ StageFn = Callable[[dict[str, Any]], dict[str, Any]]
 _FALLBACKS: dict[str, StageFn] = {
     "research_plan": core.endpoint_research_plan,
     "evidence_extract": core.endpoint_evidence_extract,
+    "evidence_verify": core.endpoint_evidence_verify,
     "screen_score": core.endpoint_screen_score,
     "memo_write": core.endpoint_memo_write,
     "adversary_write": core.endpoint_adversary_write,
@@ -34,6 +35,10 @@ def endpoint_research_plan(payload: dict[str, Any]) -> dict[str, Any]:
 
 def endpoint_evidence_extract(payload: dict[str, Any]) -> dict[str, Any]:
     return execute("evidence_extract", payload)
+
+
+def endpoint_evidence_verify(payload: dict[str, Any]) -> dict[str, Any]:
+    return execute("evidence_verify", payload)
 
 
 def endpoint_screen_score(payload: dict[str, Any]) -> dict[str, Any]:

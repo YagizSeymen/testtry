@@ -44,6 +44,48 @@ class HttpPipelineTest(unittest.TestCase):
         self.assertEqual(health["runtime_mode"], "deterministic")
         self.assertEqual(health["model_by_stage"]["memo_write"], "gpt-5.6-terra")
 
+        sourcing_plan = self.post(
+            "/v1/ai/sourcing/plan",
+            {"thesis": "Technical founders in Europe building AI infrastructure with product traction."},
+        )
+        discovery = self.post(
+            "/v1/ai/sourcing/discover",
+            {
+                "sourcing_plan": sourcing_plan,
+                "candidate_documents": [
+                    {
+                        "candidate": {"company_name": "Acme AI", "founder_names": ["Ada Founder"]},
+                        "source": SOURCE,
+                        "page_text": PAGE_TEXT,
+                    }
+                ],
+            },
+        )
+        ranking = self.post("/v1/ai/sourcing/rank", {"discovery": discovery})
+        self.assertIn("ranked_candidates", ranking)
+        sourcing_run = self.post(
+            "/v1/ai/sourcing/run",
+            {
+                "thesis": "Technical founders in Europe building AI infrastructure with product traction.",
+                "candidate_documents": [
+                    {
+                        "candidate": {"company_name": "Acme AI", "founder_names": ["Ada Founder"]},
+                        "source": SOURCE,
+                        "page_text": PAGE_TEXT,
+                    }
+                ],
+            },
+        )
+        self.assertIn("ranking", sourcing_run)
+        self.assertTrue(sourcing_run["audit_events"])
+        resolved = self.post(
+            "/v1/ai/founders/memory/resolve",
+            {"founder_name": "Ada Founder", "aliases": ["Ada F."]},
+        )
+        self.assertEqual(resolved["resolution_confidence"], "medium")
+        profile = self.post("/v1/ai/founders/memory/get", {"founder_name": "Ada Founder"})
+        self.assertIn("founder_score", profile)
+
         plan = self.post("/v1/ai/research/plan", {"deal": DEAL})
         self.assertIn("queries", plan)
 
@@ -52,9 +94,12 @@ class HttpPipelineTest(unittest.TestCase):
             {"deal": DEAL, "source": SOURCE, "page_text": PAGE_TEXT},
         )
         evidence = extracted["evidence"]
+        validation = self.post("/v1/ai/evidence/verify", {"deal": DEAL, "evidence": evidence})
+        evidence = validation["evidence"]
 
         screening = self.post("/v1/ai/screen/score", {"deal": DEAL, "evidence": evidence})
         self.assertIn(screening["weakest_axis"], core.SCREENING_AXES)
+        self.assertIn(screening["weakest_opportunity_axis"], core.OPPORTUNITY_AXES)
 
         memo = self.post(
             "/v1/ai/memo/write",

@@ -10,6 +10,7 @@ class OrchestrationTest(unittest.TestCase):
         manifest = model_manifest()
         self.assertEqual(manifest["research_plan"], LUNA_MODEL)
         self.assertEqual(manifest["evidence_extract"], LUNA_MODEL)
+        self.assertEqual(manifest["evidence_verify"], TERRA_MODEL)
         self.assertEqual(manifest["screen_score"], TERRA_MODEL)
         self.assertEqual(manifest["memo_write"], TERRA_MODEL)
         self.assertEqual(manifest["adversary_write"], TERRA_MODEL)
@@ -30,6 +31,7 @@ class OrchestrationTest(unittest.TestCase):
         )
         self.assertIn("research_plan", result)
         self.assertIn("evidence", result)
+        self.assertIn("evidence_validation", result)
         self.assertIn("screening", result)
         self.assertIn("memo", result)
         self.assertIn("adversary_report", result)
@@ -37,6 +39,8 @@ class OrchestrationTest(unittest.TestCase):
         self.assertIn("verdict_brief", result)
         self.assertTrue(any("parallel_sources=2" in event for event in result["trace"]))
         self.assertEqual(result["trace"][-1], "verdict_brief:luna:non_authoritative")
+        self.assertTrue(result["audit_events"])
+        self.assertTrue(all("chain-of-thought" not in str(event) for event in result["audit_events"]))
 
 
 if __name__ == "__main__":

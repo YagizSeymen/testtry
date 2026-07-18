@@ -25,6 +25,8 @@ SCREENING_AXES = [
     "risk",
 ]
 
+OPPORTUNITY_AXES = ["founder", "market", "idea_market"]
+
 TIE_BREAKER_ORDER = [
     "risk",
     "founder",
@@ -165,6 +167,33 @@ def stable_id(prefix: str, *parts: Any) -> str:
     return f"{prefix}_{digest}"
 
 
+def audit_trace_event(
+    *,
+    stage: str,
+    run_id: str | None = None,
+    model: str | None = None,
+    input_reference_ids: list[str] | None = None,
+    output_reference_ids: list[str] | None = None,
+    event_type: str = "stage_completed",
+    status_detail: str | None = None,
+) -> dict[str, Any]:
+    """Create an audit-safe event without exposing model reasoning."""
+
+    recorded_at = now_iso()
+    outputs = [str(item) for item in output_reference_ids or [] if item]
+    return {
+        "event_id": stable_id("trace", run_id, stage, event_type, ",".join(outputs), recorded_at),
+        "event_type": event_type,
+        "stage": stage,
+        "run_id": run_id,
+        "model": model,
+        "input_reference_ids": [str(item) for item in input_reference_ids or [] if item],
+        "output_reference_ids": outputs,
+        "status_detail": status_detail,
+        "recorded_at": recorded_at,
+    }
+
+
 def require_object(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     if not isinstance(value, dict):
@@ -268,6 +297,20 @@ def confidence_for(source: dict[str, Any], sentence: str) -> str:
     return "medium" if len(sentence) > 80 else "low"
 
 
+def trust_for(source: dict[str, Any], sentence: str) -> tuple[int, str]:
+    """Initial per-claim Trust Score before cross-source validation."""
+
+    confidence = confidence_for(source, sentence)
+    source_kind = str(source.get("kind") or "other")
+    if source_kind in {"github", "paper", "patent", "hackathon", "accelerator", "investor_page"}:
+        return 85, "externally_verified"
+    if confidence == "high":
+        return 78, "internally_consistent"
+    if confidence == "medium":
+        return 65, "internally_consistent"
+    return 45, "unverified"
+
+
 def freshness_for(sentence: str) -> str:
     years = [int(y) for y in re.findall(r"\b(20[0-2][0-9])\b", sentence)]
     if not years:
@@ -349,6 +392,7 @@ def endpoint_evidence_extract(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         seen_claims.add(key)
         evidence_type = classify_evidence_type(claim, deal)
+        trust_score, trust_status = trust_for(source, claim)
         evidence.append(
             {
                 "evidence_id": stable_id("ev", deal_id(deal), source_id, claim),
@@ -360,11 +404,53 @@ def endpoint_evidence_extract(payload: dict[str, Any]) -> dict[str, Any]:
                 "quote": claim,
                 "evidence_type": evidence_type,
                 "confidence": confidence_for(source, claim),
+                "trust_score": trust_score,
+                "trust_status": trust_status,
+                "contradicted_by_evidence_ids": [],
                 "freshness": freshness_for(claim),
                 "captured_at": now_iso(),
             }
         )
     return {"evidence": evidence}
+
+
+def endpoint_evidence_verify(payload: dict[str, Any]) -> dict[str, Any]:
+    """Apply the Truth-Gap discipline to normal claims before screening.
+
+    This deterministic MVP detects only obvious semantic conflicts. The Terra
+    implementation can replace this stage in OpenAI mode, while the response
+    shape remains an auditable per-claim Trust Score record.
+    """
+
+    deal = require_object(payload, "deal")
+    evidence = require_list(payload, "evidence")
+    verified = [dict(item) for item in evidence]
+    contradicted = 0
+    for index, item in enumerate(verified):
+        conflicts = []
+        for other_index, other in enumerate(verified):
+            if index == other_index:
+                continue
+            if claims_contradict(str(item.get("claim") or ""), str(other.get("claim") or "")):
+                if other.get("evidence_id"):
+                    conflicts.append(str(other["evidence_id"]))
+        current_score = int(item.get("trust_score") or 50)
+        if conflicts:
+            item["contradicted_by_evidence_ids"] = dedupe(conflicts)
+            item["trust_score"] = max(0, current_score - 35)
+            item["trust_status"] = "contradicted"
+            contradicted += 1
+        else:
+            item.setdefault("contradicted_by_evidence_ids", [])
+            item.setdefault("trust_score", 50)
+            item.setdefault("trust_status", "unverified")
+    return {
+        "validation_id": stable_id("evval", deal_id(deal), len(verified)),
+        "deal_id": deal_id(deal),
+        "evidence": verified,
+        "contradicted_count": contradicted,
+        "created_at": now_iso(),
+    }
 
 
 def endpoint_screen_score(payload: dict[str, Any]) -> dict[str, Any]:
@@ -408,14 +494,18 @@ def endpoint_screen_score(payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    weakest_axis = choose_weakest_axis(axis_scores)
-    overall = round(sum(item["score"] for item in axis_scores) / len(axis_scores))
+    opportunity_axes = build_opportunity_axes(axis_scores, evidence, payload.get("founder_profiles"))
+    weakest_opportunity_axis = choose_weakest_opportunity_axis(opportunity_axes)
+    weakest_axis = choose_counter_case_lens(opportunity_axes, axis_scores)
+    recommendation_basis = recommendation_basis_for(opportunity_axes)
     return {
         "deal_id": deal_id(deal),
         "axis_scores": axis_scores,
+        "opportunity_axes": opportunity_axes,
+        "weakest_opportunity_axis": weakest_opportunity_axis,
         "weakest_axis": weakest_axis,
         "selected_counter_case_lens": weakest_axis,
-        "overall_score": overall,
+        "recommendation_basis": recommendation_basis,
     }
 
 
@@ -424,28 +514,42 @@ def endpoint_memo_write(payload: dict[str, Any]) -> dict[str, Any]:
     evidence = require_list(payload, "evidence")
     screening = require_object(payload, "screening")
     name = company_name(deal)
-    overall = int(screening.get("overall_score") or 0)
     axis_scores = screening.get("axis_scores") if isinstance(screening.get("axis_scores"), list) else []
+    opportunity_axes = screening.get("opportunity_axes") if isinstance(screening.get("opportunity_axes"), list) else []
     weakest = str(screening.get("weakest_axis") or choose_weakest_axis(axis_scores))
-    recommendation = recommendation_for(overall, axis_scores, evidence)
+    weakest_opportunity_axis = str(screening.get("weakest_opportunity_axis") or "unknown")
+    recommendation = recommendation_for(opportunity_axes, axis_scores, evidence)
     evidence_ids = [str(item.get("evidence_id")) for item in evidence if item.get("evidence_id")]
 
     thesis = build_thesis(evidence, axis_scores)
     risks = build_risks(evidence, axis_scores)
     questions = build_diligence_questions(axis_scores, weakest)
+    data_gaps = collect_data_gaps(axis_scores)
+    traction = [
+        f"{item.get('claim')} Evidence: {item.get('evidence_id')}."
+        for item in evidence
+        if item.get("evidence_type") == "traction"
+    ][:5] or ["Traction & KPIs: unavailable in current Memory."]
 
     return {
-        "memo_id": stable_id("memo", deal_id(deal), overall, len(evidence)),
+        "memo_id": stable_id("memo", deal_id(deal), recommendation, len(evidence)),
         "deal_id": deal_id(deal),
         "recommendation": recommendation,
         "summary": (
-            f"{name} has an overall screening score of {overall}/100. "
-            f"The weakest axis is {weakest.replace('_', ' ')}. "
+            f"{name} is assessed across independent Founder, Market, and Idea vs. Market axes. "
+            f"The weakest decision axis is {weakest_opportunity_axis.replace('_', ' ')}, "
+            f"with a {weakest.replace('_', ' ')} counter-case focus. "
             "This memo is generated only from Memory evidence and should be reviewed by a human."
         ),
+        "company_snapshot": company_snapshot(name, evidence),
         "investment_thesis": thesis,
+        "swot": build_swot(thesis, risks, data_gaps),
+        "problem_product": problem_product_summary(evidence),
+        "traction_kpis": traction,
         "key_risks": risks,
         "diligence_questions": questions,
+        "diligence_log": build_diligence_log(evidence, data_gaps),
+        "data_gaps": data_gaps,
         "evidence_ids": evidence_ids[:20],
         "created_at": now_iso(),
     }
@@ -458,6 +562,7 @@ def endpoint_adversary_write(payload: dict[str, Any]) -> dict[str, Any]:
     memo = require_object(payload, "memo")
     lens = str(screening.get("selected_counter_case_lens") or screening.get("weakest_axis") or "risk")
     weakest_axis = str(screening.get("weakest_axis") or lens)
+    weakest_opportunity_axis = str(screening.get("weakest_opportunity_axis") or "unknown")
     axis_scores = screening.get("axis_scores") if isinstance(screening.get("axis_scores"), list) else []
     score_by_axis = {str(item.get("axis")): int(item.get("score") or 0) for item in axis_scores if isinstance(item, dict)}
     relevant = evidence_for_axis(evidence, lens)
@@ -534,6 +639,7 @@ def endpoint_adversary_write(payload: dict[str, Any]) -> dict[str, Any]:
         "memo_id": str(memo.get("memo_id") or ""),
         "counter_case_lens": lens,
         "weakest_axis": weakest_axis,
+        "weakest_opportunity_axis": weakest_opportunity_axis,
         "summary": (
             f"Single-pass counter-case focused on {lens.replace('_', ' ')}. "
             "This is not a debate loop; each objection must be verified against Memory."
@@ -640,17 +746,143 @@ def choose_weakest_axis(axis_scores: list[dict[str, Any]]) -> str:
     return sorted(tied)[0]
 
 
-def recommendation_for(overall: int, axis_scores: list[dict[str, Any]], evidence: list[dict[str, Any]]) -> str:
+def build_opportunity_axes(
+    axis_scores: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+    founder_profiles: Any,
+) -> list[dict[str, Any]]:
+    """Build the challenge's three independent decision axes without averaging."""
+
+    by_axis = {str(item.get("axis")): item for item in axis_scores if isinstance(item, dict)}
+    founder_profiles = founder_profiles if isinstance(founder_profiles, list) else []
+    founder_scores = [
+        int(profile.get("founder_score", {}).get("score"))
+        for profile in founder_profiles
+        if isinstance(profile, dict)
+        and isinstance(profile.get("founder_score"), dict)
+        and isinstance(profile["founder_score"].get("score"), int)
+    ]
+
+    def details(names: list[str]) -> tuple[list[str], list[str], int]:
+        entries = [by_axis[name] for name in names if name in by_axis]
+        ids = [str(eid) for entry in entries for eid in entry.get("evidence_ids", []) if eid]
+        missing = [str(value) for entry in entries for value in entry.get("missing_evidence", []) if value]
+        score = max((int(entry.get("score") or 0) for entry in entries), default=0)
+        return dedupe(ids), dedupe(missing), score
+
+    def outlook_for(score: int, missing: list[str], *, no_evidence_is_bear: bool = False) -> str:
+        if score >= 68 and not missing:
+            return "bullish"
+        if score < 40 and (no_evidence_is_bear or not missing):
+            return "bear"
+        return "neutral"
+
+    founder_ids, founder_missing, founder_score = details(["founder"])
+    memory_score = max(founder_scores, default=0)
+    if memory_score:
+        founder_score = max(founder_score, memory_score)
+    market_ids, market_missing, market_score = details(["market", "competition"])
+    idea_ids, idea_missing, idea_score = details(["product", "traction", "business_model"])
+
+    return [
+        {
+            "axis": "founder",
+            "outlook": outlook_for(founder_score, founder_missing),
+            "trend": founder_trend(founder_profiles, evidence),
+            "rationale": (
+                "Founder axis uses public founder evidence and the persistent Founder Score when available. "
+                "Sparse public evidence remains a confidence gap, not a negative trait."
+            ),
+            "evidence_ids": founder_ids,
+            "missing_evidence": founder_missing,
+            "founder_score": memory_score or None,
+        },
+        {
+            "axis": "market",
+            "outlook": outlook_for(market_score, market_missing),
+            "trend": trend_from_evidence([item for item in evidence if item.get("evidence_type") in {"market", "competition"}]),
+            "rationale": "Market axis evaluates sizing, timing, and competitive evidence independently.",
+            "evidence_ids": market_ids,
+            "missing_evidence": market_missing,
+            "founder_score": None,
+        },
+        {
+            "axis": "idea_market",
+            "outlook": outlook_for(idea_score, idea_missing),
+            "trend": trend_from_evidence([item for item in evidence if item.get("evidence_type") in {"product", "traction", "business_model"}]),
+            "rationale": "Idea vs. Market tests product proof, traction, and business-model evidence without averaging it into the other axes.",
+            "evidence_ids": idea_ids,
+            "missing_evidence": idea_missing,
+            "founder_score": None,
+        },
+    ]
+
+
+def trend_from_evidence(items: list[dict[str, Any]]) -> str:
+    text = " ".join(str(item.get("claim") or "") for item in items).lower()
+    if any(term in text for term in ("growing", "growth", "launched", "increased", "expanded", "signed")):
+        return "improving"
+    if any(term in text for term in ("declined", "churn", "lost", "shutdown", "decreased")):
+        return "declining"
+    return "stable" if items else "unknown"
+
+
+def founder_trend(founder_profiles: list[Any], evidence: list[dict[str, Any]]) -> str:
+    trends = [
+        profile.get("founder_score", {}).get("trend")
+        for profile in founder_profiles
+        if isinstance(profile, dict) and isinstance(profile.get("founder_score"), dict)
+    ]
+    if "improving" in trends:
+        return "improving"
+    if "declining" in trends:
+        return "declining"
+    return trend_from_evidence([item for item in evidence if item.get("evidence_type") == "founder"])
+
+
+def choose_counter_case_lens(opportunity_axes: list[dict[str, Any]], axis_scores: list[dict[str, Any]]) -> str:
+    if opportunity_axes:
+        axis = choose_weakest_opportunity_axis(opportunity_axes)
+        return {"founder": "founder", "market": "market", "idea_market": "product"}.get(axis, "risk")
+    return choose_weakest_axis(axis_scores)
+
+
+def choose_weakest_opportunity_axis(opportunity_axes: list[dict[str, Any]]) -> str:
+    """Choose among the three decision axes; list order is the explicit tie-breaker."""
+
+    ranking = {"bear": 0, "neutral": 1, "bullish": 2}
+    if not opportunity_axes:
+        return "unknown"
+    weakest = min(opportunity_axes, key=lambda item: ranking.get(str(item.get("outlook")), 1))
+    return str(weakest.get("axis") or "unknown")
+
+
+def recommendation_basis_for(opportunity_axes: list[dict[str, Any]]) -> str:
+    outlooks = {str(item.get("axis")): str(item.get("outlook")) for item in opportunity_axes if isinstance(item, dict)}
+    return (
+        "Independent opportunity axes: "
+        f"Founder={outlooks.get('founder', 'unknown')}, "
+        f"Market={outlooks.get('market', 'unknown')}, "
+        f"Idea vs. Market={outlooks.get('idea_market', 'unknown')}. "
+        "No aggregate score is used for the recommendation."
+    )
+
+
+def recommendation_for(
+    opportunity_axes: list[dict[str, Any]], axis_scores: list[dict[str, Any]], evidence: list[dict[str, Any]]
+) -> str:
     if len(evidence) < 5:
         return "needs_more_research"
-    weakest_score = min((int(item.get("score") or 0) for item in axis_scores if isinstance(item, dict)), default=0)
+    outlooks = {str(item.get("axis")): str(item.get("outlook")) for item in opportunity_axes if isinstance(item, dict)}
     risk_score = next((int(item.get("score") or 0) for item in axis_scores if item.get("axis") == "risk"), 50)
-    if overall >= 72 and weakest_score >= 50 and risk_score >= 45:
-        return "approve"
-    if overall >= 55:
-        return "watchlist"
-    if weakest_score < 35 or risk_score < 35:
+    if risk_score < 35 or outlooks.get("market") == "bear":
         return "reject"
+    if all(outlooks.get(axis) == "bullish" for axis in OPPORTUNITY_AXES) and risk_score >= 45:
+        return "approve"
+    if any(outlooks.get(axis) == "bear" for axis in OPPORTUNITY_AXES):
+        return "needs_more_research"
+    if any(outlooks.get(axis) == "neutral" for axis in OPPORTUNITY_AXES):
+        return "watchlist"
     return "needs_more_research"
 
 
@@ -677,6 +909,89 @@ def build_risks(evidence: list[dict[str, Any]], axis_scores: list[dict[str, Any]
     if risk_ids:
         risks.append(f"Risk-specific Memory records require review: {', '.join(risk_ids[:4])}.")
     return risks or ["No explicit blocking risk was found, but absence of evidence is not proof of safety."]
+
+
+def company_snapshot(name: str, evidence: list[dict[str, Any]]) -> str:
+    company_evidence = [
+        str(item.get("claim"))
+        for item in evidence
+        if item.get("evidence_type") in {"company", "product", "market"}
+    ]
+    if company_evidence:
+        return f"{name}: {company_evidence[0]}"
+    return f"{name}: company snapshot unavailable in current Memory."
+
+
+def build_swot(thesis: list[str], risks: list[str], gaps: list[str]) -> dict[str, list[str]]:
+    return {
+        "strengths": thesis[:3] or ["No evidence-backed strength is available yet."],
+        "weaknesses": gaps[:3] or ["No specific weakness has been verified."],
+        "opportunities": ["Validate the strongest evidence-backed wedge with primary customer and market sources."],
+        "risks": risks[:4],
+    }
+
+
+def problem_product_summary(evidence: list[dict[str, Any]]) -> str:
+    product_evidence = [
+        str(item.get("claim"))
+        for item in evidence
+        if item.get("evidence_type") in {"product", "company"}
+    ]
+    if product_evidence:
+        return product_evidence[0]
+    return "Problem and product details are unavailable in current Memory."
+
+
+def collect_data_gaps(axis_scores: list[dict[str, Any]]) -> list[str]:
+    gaps = [
+        str(value)
+        for item in axis_scores
+        if isinstance(item, dict)
+        for value in item.get("missing_evidence", [])
+        if value
+    ]
+    gaps.extend(
+        [
+            "Financials and round structure: not disclosed in current Memory.",
+            "Cap table: not disclosed in current Memory.",
+        ]
+    )
+    return dedupe(gaps)
+
+
+def build_diligence_log(evidence: list[dict[str, Any]], data_gaps: list[str]) -> list[dict[str, Any]]:
+    categories = {
+        "commercial": {"traction", "business_model", "market"},
+        "people": {"founder"},
+        "technical": {"product"},
+        "financial": {"fundraising", "business_model"},
+        "legal": {"risk"},
+    }
+    log = []
+    for area, types in categories.items():
+        ids = [
+            str(item.get("evidence_id"))
+            for item in evidence
+            if item.get("evidence_type") in types and item.get("evidence_id")
+        ][:5]
+        log.append(
+            {
+                "area": area,
+                "status": "checked" if ids else "open",
+                "evidence_ids": ids,
+                "note": None if ids else f"{area.title()} diligence evidence is unavailable or incomplete.",
+            }
+        )
+    if data_gaps:
+        log.append(
+            {
+                "area": "disclosure",
+                "status": "not_disclosed",
+                "evidence_ids": [],
+                "note": "; ".join(data_gaps[:3]),
+            }
+        )
+    return log
 
 
 def build_diligence_questions(axis_scores: list[dict[str, Any]], weakest: str) -> list[str]:
@@ -779,6 +1094,20 @@ def token_overlap(left: str, right: str) -> float:
     if not left_tokens or not right_tokens:
         return 0.0
     return len(left_tokens & right_tokens) / max(1, len(left_tokens))
+
+
+def claims_contradict(left: str, right: str) -> bool:
+    """Catch only high-confidence explicit negation conflicts in the MVP."""
+
+    left_tokens = tokenize(left)
+    right_tokens = tokenize(right)
+    overlap = len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+    if overlap < 0.55:
+        return False
+    negative = (" no ", " not ", " never ", " without ", " declined ", " churn ")
+    left_negative = any(marker in f" {left.lower()} " for marker in negative)
+    right_negative = any(marker in f" {right.lower()} " for marker in negative)
+    return left_negative != right_negative
 
 
 def severity_for(score: int) -> int:

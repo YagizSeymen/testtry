@@ -2,22 +2,22 @@
 
 An AI-assisted venture screening system for the challenge **"The VC Brain: Deploying $100K Checks in 24 Hours"**.
 
-The product helps a human investment reviewer move from a raw startup profile to an evidence-backed investment memo, an adversarial counter-case, and a final approval decision. It does **not** autonomously invest. It accelerates sourcing, research, screening, and memo preparation while keeping the $100K deployment decision human-approved.
+The product helps a human investment reviewer discover exceptional founders before fundraising, accept inbound applications, and move either path to an evidence-backed memo, a bounded counter-case, and a final human approval decision. It does **not** autonomously invest. It accelerates sourcing, research, screening, and memo preparation while keeping the $100K deployment decision human-approved.
 
 ## Core Idea
 
-The VC Brain turns a startup into an investable decision packet:
+The VC Brain has two entry paths that converge into one investable decision packet:
 
-1. Ingest a startup URL, pitch deck text, founder names, or a short company description.
-2. Crawl the web for verifiable evidence about the company, founders, market, traction, competitors, and risks.
-3. Store every extracted fact in shared Memory with an `evidence_id`, source URL, timestamp, confidence, and quote/snippet.
-4. Score the startup across venture screening axes.
-5. Write an investment memo using only cited evidence from Memory.
-6. Run one bounded devil's advocate LLM pass, selected by the weakest screening axis.
-7. Route each adversarial objection back through the same truth-gap Judge used for normal claim verification.
-8. Give every objection a badge: `verified`, `unverified`, or `speculation`.
-9. Optionally generate a short non-authoritative AI brief summarizing whether the verified objections appear decision-changing.
-10. Present the memo, verified counter-case, optional brief, and source evidence side by side for human approval.
+1. **Outbound sourcing:** an investor sets a thesis, then the system searches public GitHub, launches, hackathons, papers/patents, accelerator cohorts, and funding sources for source-backed candidates.
+2. **Inbound application:** a founder submits at least a company name and deck, with optional URL and founder fields.
+3. Both paths crawl and normalize verifiable evidence into persistent Memory with an `evidence_id`, source URL, timestamp, Trust Score, and quote/snippet.
+4. Founder Memory maintains a persistent Founder Score across applications and milestones; a sparse public footprint is a low-confidence cold start, never a negative founder fact.
+5. Screen the opportunity independently on Founder, Market, and Idea vs. Market axes, with an explicit trend for each. They are never averaged into one decision number.
+6. Write an evidence-backed investment memo using only cited Memory and explicitly marking unavailable data.
+7. Run one bounded devil's advocate pass, selected by the weakest decision lens.
+8. Route each adversarial objection back through the same truth-gap Judge used for normal claim verification.
+9. Give every objection a badge: `verified`, `unverified`, or `speculation`.
+10. Optionally generate a short non-authoritative AI brief, then present memo, counter-case, claim Trust Scores, and source evidence for human approval.
 
 The architecture keeps the exceptional part focused: strong evidence collection, transparent reasoning, and bounded adversarial review. It avoids an unstable multi-agent debate loop.
 
@@ -38,26 +38,20 @@ This gives us adversarial rigor without a fragile debate loop.
 ## Architecture
 
 ```text
-Frontend
-  |
-  |  Startup intake, progress view, memo review, final approve/reject
-  v
-Backend API
-  |
-  |  Orchestrates jobs, auth, persistence, status, API contracts
-  v
-AI Service
-  |
-  +-- Research Planner
-  +-- Web Crawling Workers
-  +-- Evidence Extractor
-  +-- Memory Store
-  +-- Screening Scorer
-  +-- Memo Writer
-  +-- Devil's Advocate
-  +-- Truth-Gap Judge
-  +-- Optional Verdict Brief
-  +-- Final Decision Packet Builder
+Investor Thesis Engine                 Inbound Application
+  | sectors, geography, risk             | company name + deck minimum
+  v                                      v
+Outbound Sourcing ----------------> Shared Memory <---------------- Inbound Research
+  | web search, crawler, entity          | sources, evidence, Founder Score,
+  | resolution, candidate ranking        | trust/contradiction history
+  +------------------------------+-------+
+                                 v
+                      Three-Axis Intelligence
+                Founder | Market | Idea vs. Market
+                                 v
+               Memo -> one Counter-Case -> Truth-Gap Judge
+                                 v
+                         Human $100K Decision
 ```
 
 ### Frontend
@@ -66,7 +60,7 @@ The frontend is the command center for a reviewer. It should support:
 
 - Deal intake: company name, URL, short description, founder names, optional deck text.
 - Live research progress: crawler status, discovered sources, extracted evidence count.
-- Screening dashboard: Founder, Market, Product, Traction, Business Model, Fundraising, and Risk scores.
+- Screening dashboard: the three decision axes (Founder, Market, Idea vs. Market), with product, traction, business model, fundraising, and risk retained as supporting diagnostics.
 - Memo view: investment thesis, evidence-backed rationale, risks, missing information, recommendation.
 - Counter-case view: adversarial objections with `verified`, `unverified`, or `speculation` badges.
 - Optional AI brief: a compact, non-authoritative summary of whether verified objections look decision-changing.
@@ -77,10 +71,12 @@ The frontend is the command center for a reviewer. It should support:
 The backend owns orchestration and persistence. It should:
 
 - Accept deal intake from the frontend.
-- Create deal, research, memo, adversary, truth-gap verification, and optional verdict-brief jobs.
+- Persist versioned theses, sourcing jobs, candidates, activation state, normalized Memory, deal jobs, and source-channel outcomes.
+- Create research, memo, adversary, truth-gap verification, and optional verdict-brief jobs.
 - Store all normalized outputs.
 - Expose stable APIs for frontend and AI service.
 - Enforce job state transitions.
+- Record human decisions against the decision-packet version and operational audit events without persisting chain-of-thought.
 - Keep the final decision human-controlled.
 
 ### AI Service
@@ -89,15 +85,63 @@ The AI service owns the intelligence pipeline. It should expose deterministic, v
 
 The AI service stages are:
 
-1. `research.plan`: generate targeted web research tasks.
-2. `research.crawl`: crawl and fetch source pages.
-3. `evidence.extract`: convert pages into structured facts.
-4. `screen.score`: score the company across screening axes.
-5. `memo.write`: write the investment memo from Memory.
-6. `adversary.write`: write the strongest case against investing.
-7. `truth_gap.verify`: reuse the truth-gap Judge to badge each adversarial objection.
-8. `verdict.brief`: optionally summarize whether verified objections look decision-changing for the human reviewer.
-9. `packet.build`: produce final reviewer-ready output.
+1. `sourcing.plan`: turn a Thesis Engine request into transparent outbound queries.
+2. `research.crawl`: crawl an explicit bounded list of public source pages.
+3. `sourcing.discover`: resolve source-backed founder/company candidates from crawler documents or cited web search.
+4. `sourcing.rank`: assess candidate evidence coverage and thesis eligibility before a human activation decision.
+5. `founders.memory.*`: create provisional identity references and persist Founder Score evidence, milestones, and history across applications.
+6. `research.plan`: generate targeted research tasks for a known inbound or activated deal.
+7. `evidence.extract` and `evidence.verify`: convert pages into facts, assign per-claim Trust Scores, and flag contradictions.
+8. `screen.score`: score the opportunity independently on Founder, Market, and Idea vs. Market axes.
+9. `memo.write`: write the required investor memo sections from Memory while marking data gaps.
+10. `adversary.write`, `truth_gap.verify`, and optional `verdict.brief`: produce and verify one bounded counter-case for the human reviewer.
+
+## Sourcing And Founder Discovery
+
+Sourcing is a first-class product path, not a search box attached to diligence.
+The investor configures a Thesis Engine with natural-language criteria plus
+sector, geography, stage, check size, ownership target, and risk appetite. The
+AI service expands that thesis into explicit query families, including GitHub
+and open-source execution, launches/product traction, hackathons, papers or
+patents, accelerator cohorts, and public funding sources.
+
+For example, the system can run one thesis such as:
+
+> Find technical founders in Europe working on AI infrastructure who have strong execution signals, no previous VC funding, and evidence of product traction.
+
+The result is a ranked candidate list with source-backed eligibility records,
+not an investment decision. Each candidate can then be activated to apply or
+converted to a normal deal intake and passed through the same diligence flow as
+an inbound application.
+
+`no previous VC funding` is handled carefully: the system can report **no public
+funding evidence found in the searched corpus**, but it cannot claim that no VC
+funding exists. Every such candidate remains marked for human confirmation.
+
+The outbound path is bounded:
+
+1. Thesis planner writes a transparent query plan.
+2. Web search returns cited candidate leads, or backend-provided crawler documents are used in deterministic mode.
+3. The crawler fetches only an explicit, capped list of public pages, rejects local/private network targets, checks `robots.txt`, rate-limits by host, and preserves source metadata.
+4. Candidate evidence is extracted and deduplicated by source, signal, and claim.
+5. A deterministic eligibility rank checks evidence coverage against the thesis.
+6. Only the top candidates enter the heavier deal-diligence graph.
+
+## Founder Memory And Cold Start
+
+Founder Memory persists an evidence-backed profile keyed by founder identity:
+
+- Founder Score, confidence, trend, and score history.
+- Milestones such as an open-source release, launch, paper, patent, or hackathon result.
+- Exact evidence IDs behind each factor.
+- Provisional identity metadata (`founder_id`, aliases, resolution confidence) so normalized-name matches are not mistaken for certain entity resolution.
+
+The Founder Score is one input to the opportunity's **Founder** axis; it never
+replaces the three-axis opportunity assessment. For a first-time founder with
+no public GitHub, funding, or network record, the score starts as a neutral,
+low-confidence provisional score. Missing public data becomes a diligence gap,
+not a proxy for lack of ability. New evidence and founder-submitted milestones
+update the profile over time.
 
 ## Memory And Evidence
 
@@ -107,13 +151,17 @@ Each Memory item has:
 
 - `evidence_id`: stable ID like `ev_001`.
 - `deal_id`: deal being evaluated.
+- `candidate_id` / `founder_id`: optional cross-funnel associations for the same normalized Memory claim.
 - `source_url`: original source.
 - `source_title`: source title if available.
 - `captured_at`: timestamp.
+- `published_at`, canonical URL, source channel, and content hash where available.
 - `claim`: normalized factual statement.
 - `quote`: source snippet supporting the claim.
 - `evidence_type`: `company`, `founder`, `market`, `traction`, `competition`, `fundraising`, `risk`, or `unknown`.
 - `confidence`: `low`, `medium`, or `high`.
+- `trust_score`: per-claim score from source quality, corroboration, and contradictions.
+- `trust_status`: `unverified`, `internally_consistent`, `externally_verified`, or `contradicted`.
 - `freshness`: `current`, `stale`, or `unknown`.
 
 Rules:
@@ -123,6 +171,7 @@ Rules:
 - Every adversarial objection must cite an `evidence_id` or be labeled `speculation`.
 - Speculation is allowed only as risk reasoning, not as a factual assertion.
 - The truth-gap Judge badges objections with missing, irrelevant, or contradicted evidence as `unverified`.
+- Claim validation runs before screening; direct contradictions reduce the affected claim's Trust Score and are visible to the reviewer.
 
 ## Research And Crawling
 
@@ -143,6 +192,7 @@ Crawler guardrails:
 
 - Respect robots and rate limits.
 - Store source URLs and timestamps.
+- Preserve canonical URLs, response-content hashes, source channel, and a backend raw-document reference when retention is permitted.
 - De-duplicate identical or near-identical content.
 - Prefer primary sources when available.
 - Label stale or low-confidence evidence.
@@ -150,33 +200,66 @@ Crawler guardrails:
 
 ## Screening Axes
 
-The screening scorer returns normalized scores from `0` to `100`.
+The decision layer shows exactly three independent, **non-averaged** opportunity
+axes. Each exposes `bullish`, `neutral`, or `bear`, a trend, supporting evidence
+IDs, and explicit gaps:
 
-Recommended axes:
+- `founder`: track record, domain fit, execution signals, and the persistent Founder Score.
+- `market`: market size, urgency, timing, competition, and buyer context.
+- `idea_market`: whether the product, traction, and business model survive market scrutiny as-is, or whether the team would need to pivot.
 
-- `founder`: track record, domain fit, credibility, execution signals.
-- `market`: market size, timing, growth, urgency, buyer pain.
-- `product`: clarity, differentiation, technical defensibility, UX/product proof.
-- `traction`: revenue, customers, usage, pilots, retention, growth rate.
-- `business_model`: pricing, margins, sales motion, repeatability.
-- `fundraising`: prior funding, round fit, valuation plausibility, investor signal.
-- `risk`: legal, regulatory, reputational, technical, concentration, execution risk.
+Supporting diagnostics for product, traction, business model, fundraising, and
+risk remain visible, but do not become a single overall score. The decision
+recommendation explains the three axes rather than averaging them.
 
-The weakest axis selects the counter-case lens. This is not a personality or a debate role; it is just the area the single devil's advocate pass should stress-test most.
+The weakest of the three decision axes deterministically selects the
+counter-case focus. This is not a personality or a debate role; it is the
+functional area the single devil's advocate pass should stress-test.
 
-- Weak `founder` -> focus the counter-case on founder risk.
-- Weak `market` -> focus the counter-case on market risk.
-- Weak `product` -> focus the counter-case on product risk.
-- Weak `traction` -> focus the counter-case on traction risk.
-- Weak `business_model` -> focus the counter-case on business-model risk.
-- Weak `fundraising` -> focus the counter-case on financing and round-fit risk.
-- Weak `risk` -> focus the counter-case on legal, regulatory, reputational, and execution risk.
+- Weak `founder` -> founder/track-record evidence.
+- Weak `market` -> market and competitive evidence.
+- Weak `idea_market` -> product, traction, and business-model evidence.
 
-Tie-breaker order is: `risk`, `founder`, `traction`, `market`, `product`, `business_model`, `fundraising`. This keeps the system deterministic.
+Tie-breaker order is `founder`, `market`, `idea_market`. Supporting diagnostics
+remain visible, but they do not replace the three-axis decision frame.
 
 ## LLM Pipeline
 
-### LLM 1: Research Planner
+Each label below is a fixed stage, not a conversational agent. LangGraph owns
+the bounded state transitions; there is no debate loop or autonomous swarm.
+
+### LLM 1: Thesis And Sourcing Planner
+
+Input:
+
+- Investor thesis: sector, geography, stage, check size, ownership target, and risk appetite.
+- Natural-language required signals.
+
+Output:
+
+- Explicit query plan across GitHub, launches, hackathons, papers/patents, accelerators, and funding sources.
+- Candidate eligibility criteria and limitations.
+
+Goal:
+
+Make outbound discovery inspectable and thesis-specific before any web search happens.
+
+### LLM 2: Candidate Discovery
+
+Input:
+
+- Approved sourcing query plan.
+- Public-web search tool results with URL citations, or crawler documents in deterministic mode.
+
+Output:
+
+- Candidate companies/founders and source-backed execution, technical, location, traction, and funding signals.
+
+Goal:
+
+Find leads before fundraising without treating missing public data as a negative fact. The `no previous VC funding` condition is always a human-confirmation state, never a web-search assertion.
+
+### LLM 3: Deal Research Planner
 
 Input:
 
@@ -194,7 +277,7 @@ Goal:
 
 Create a fast plan for what the crawlers should fetch.
 
-### LLM 2: Evidence Extractor
+### LLM 4: Evidence Extractor
 
 Input:
 
@@ -209,7 +292,21 @@ Goal:
 
 Extract only evidence-backed claims. If a page is irrelevant or too weak, return no evidence.
 
-### LLM 3: Screening Scorer
+### LLM 5: Claim Trust Validator
+
+Input:
+
+- Structured Memory evidence from all crawled sources.
+
+Output:
+
+- Per-claim Trust Scores, verification status, and directly contradicted evidence IDs.
+
+Goal:
+
+Run the same truth-gap discipline on normal claims before screening and memo generation.
+
+### LLM 6: Screening Scorer
 
 Input:
 
@@ -218,16 +315,16 @@ Input:
 
 Output:
 
-- Axis scores.
+- Three independent Founder, Market, and Idea vs. Market outlooks and trends.
 - Rationale per axis.
 - Missing evidence per axis.
-- Weakest axis.
+- Weakest counter-case lens.
 
 Goal:
 
-Produce a transparent quantitative screen without pretending certainty.
+Produce a transparent non-averaged screen without pretending certainty.
 
-### LLM 4: Memo Writer
+### LLM 7: Memo Writer
 
 Input:
 
@@ -237,7 +334,7 @@ Input:
 
 Output:
 
-- Investment memo.
+- Company snapshot, hypotheses, SWOT, problem/product, traction & KPIs, diligence log, and explicit data gaps.
 - Recommendation: `approve`, `reject`, `needs_more_research`, or `watchlist`.
 - Required evidence citations.
 
@@ -245,7 +342,7 @@ Goal:
 
 Write the strongest honest investment case supported by Memory.
 
-### LLM 5: Devil's Advocate
+### LLM 8: Devil's Advocate
 
 Input:
 
@@ -273,7 +370,7 @@ Important constraints:
 - No invented facts.
 - Every objection must be evidence-backed or explicitly marked as speculation.
 
-### LLM 6: Truth-Gap Judge On Adversarial Objections
+### LLM 9: Truth-Gap Judge On Adversarial Objections
 
 Input:
 
@@ -301,7 +398,7 @@ Truth-gap Judge rules:
 - If an objection is explicitly risk reasoning from missing or weak evidence, badge it `speculation`.
 - If an objection contradicts stronger evidence in Memory, badge it `unverified` and cite the contradictory evidence.
 
-### Optional LLM 7: Verdict Brief
+### Optional LLM 10: Verdict Brief
 
 Input:
 
@@ -328,16 +425,19 @@ This stage is optional. For a faster or more conservative demo, the product can 
 
 The reviewer should see:
 
+- Thesis criteria and the outbound/inbound origin of the opportunity.
+- Persistent Founder Score, confidence, trend, milestones, and uncertainty.
 - Deal summary.
-- Screening scores.
-- Investment memo.
-- Source-backed evidence table.
+- Three independent screening axes with outlook and trend, plus supporting diagnostics.
+- Investment memo with Company Snapshot, Investment Hypotheses, SWOT, Problem & Product, Traction & KPIs, and an explicit diligence log/data gaps.
+- Source-backed evidence table with per-claim Trust Scores and contradictions.
 - Devil's advocate counter-case.
 - Truth-gap badges for each adversarial objection.
 - Optional non-authoritative verdict brief.
 - Clear approve/reject/watchlist/needs-more-research recommendation.
 - Human decision buttons.
 - Human verdict audit log: reviewer, timestamp, decision, and notes.
+- Operational stage trace: model/stage/version and input/output record IDs only, never model chain-of-thought.
 
 The final product should feel like a VC analyst team compressed into a fast, auditable workflow.
 
@@ -345,10 +445,14 @@ The final product should feel like a VC analyst team compressed into a fast, aud
 
 ### Frontend Team
 
-Use `api-contract.json` as the source of truth.
+Use `api-contract.json` (`0.4.0`) as the source of truth. It separates a
+pre-deal `SourcingJob` from a deal `Job`, and defines thesis versions, identity
+references, candidate activation, source provenance, audit events, and outcome
+feedback so the three teams can work independently.
 
 Build:
 
+- Thesis configuration and outbound candidate-list views.
 - Deal intake form.
 - Deal status page.
 - Evidence table.
@@ -364,6 +468,7 @@ Use `api-contract.json` as the source of truth.
 
 Build:
 
+- Thesis, sourcing-run, candidate, Founder Memory, and source persistence.
 - Deal persistence.
 - Job orchestration.
 - API endpoints.
@@ -379,6 +484,8 @@ Use `api-contract.json` as the source of truth.
 
 Build:
 
+- Thesis planning, cited web discovery, bounded crawling, candidate resolution, and evidence-gated ranking.
+- Persistent Founder Score updates and claim-level Trust Score validation.
 - Research planning.
 - Crawling adapter.
 - Evidence extraction.
@@ -392,20 +499,25 @@ Every AI endpoint should be callable independently so failures are isolated and 
 
 ## Demo Flow
 
-1. Reviewer enters startup name, URL, and short description.
-2. Backend creates a deal and starts the research job.
-3. Frontend shows live progress while crawler and evidence extraction run.
-4. Screening scores appear with weakest axis highlighted.
-5. Memo is generated from cited Memory.
-6. Devil's advocate report is generated using the weakest-axis counter-case lens.
-7. The truth-gap Judge badges each adversarial objection as `verified`, `unverified`, or `speculation`.
-8. Optional verdict brief summarizes the strongest verified objections for faster human review.
-9. Reviewer sees the final decision packet and approves/rejects the $100K check.
+1. Investor configures a thesis or a founder submits a company name and deck.
+2. Outbound discovery scans cited public signals, ranks candidates, and invites the strongest matches to apply; inbound and activated candidates converge into one deal funnel.
+3. Backend starts bounded crawling and evidence extraction, while the frontend shows sources, candidate signals, and Founder Score updates.
+4. Claim validation assigns Trust Scores and flags contradictions before screening.
+5. Founder, Market, and Idea vs. Market appear independently with trend and evidence gaps.
+6. The memo is generated from cited Memory and explicitly labels unavailable financial, cap-table, and diligence data.
+7. Devil's advocate report is generated using the weakest-axis counter-case lens.
+8. The truth-gap Judge badges each adversarial objection as `verified`, `unverified`, or `speculation`.
+9. Optional verdict brief summarizes the strongest verified objections for faster human review.
+10. Reviewer sees the final decision packet and approves/rejects the $100K check.
 
 ## Success Criteria
 
 - A judge can understand why the system recommends investing or not investing.
+- A judge can see thesis-driven outbound candidates before fundraising, with the exact GitHub, launch, hackathon, paper/patent, accelerator, or public-web signal that surfaced them.
+- A first-time founder with sparse public evidence is handled as a transparent cold-start case, not discarded because they lack network visibility.
 - Every important factual claim has a source.
+- Every claim has a Trust Score and visible contradiction state.
+- Founder, Market, and Idea vs. Market remain independent and are never collapsed into an average.
 - The counter-case is strong but bounded.
 - The truth-gap Judge catches hallucinated or unsupported adversarial attacks.
 - The optional verdict brief helps the reviewer scan the counter-case without replacing human judgment.

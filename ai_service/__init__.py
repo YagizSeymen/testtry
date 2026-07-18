@@ -1,3 +1,13 @@
 """AI service package for The VC Brain."""
 
-__all__ = ["core", "model_router", "orchestration", "runtime", "server"]
+__all__ = [
+    "core",
+    "crawler",
+    "memory",
+    "model_router",
+    "orchestration",
+    "runtime",
+    "server",
+    "sourcing",
+    "sourcing_orchestration",
+]

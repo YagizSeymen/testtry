@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from . import runtime
+from . import crawler, memory, runtime, sourcing, sourcing_orchestration
 from .model_router import ModelRouter, model_manifest
 
 
@@ -20,8 +20,17 @@ HandlerFn = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 ROUTES: dict[str, HandlerFn] = {
+    "/v1/ai/sourcing/plan": sourcing.endpoint_sourcing_plan,
+    "/v1/ai/sourcing/discover": sourcing.endpoint_candidates_discover,
+    "/v1/ai/sourcing/rank": sourcing.endpoint_candidates_rank,
+    "/v1/ai/sourcing/run": sourcing_orchestration.run_sourcing_workflow,
+    "/v1/ai/research/crawl": crawler.endpoint_research_crawl,
+    "/v1/ai/founders/memory/upsert": memory.endpoint_founder_memory_upsert,
+    "/v1/ai/founders/memory/get": memory.endpoint_founder_memory_get,
+    "/v1/ai/founders/memory/resolve": memory.endpoint_founder_memory_resolve,
     "/v1/ai/research/plan": runtime.endpoint_research_plan,
     "/v1/ai/evidence/extract": runtime.endpoint_evidence_extract,
+    "/v1/ai/evidence/verify": runtime.endpoint_evidence_verify,
     "/v1/ai/screen/score": runtime.endpoint_screen_score,
     "/v1/ai/memo/write": runtime.endpoint_memo_write,
     "/v1/ai/adversary/write": runtime.endpoint_adversary_write,
