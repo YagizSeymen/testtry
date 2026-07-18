@@ -1,2730 +1,572 @@
 {
-  "contract_version": "0.4.0",
-  "project": "the-vc-brain",
-  "description": "Shared API contract for frontend, backend, and AI service collaboration.",
+  "contract_version": "1.0.0",
+  "project": "VentureIntelligence - The VC Brain",
+  "source_of_truth": "steps.md",
+  "description": "Shared contract for the frontend, backend, and bounded AI lane. Public product routes are owned by the backend; the AI service exposes only fixed internal stages for the backend to call or import.",
   "principles": [
-    "All factual AI outputs must trace to Memory evidence records.",
-    "Outbound candidate discovery must retain source-backed signals and must not turn missing public data into a negative founder fact.",
-    "A Founder Score persists across applications and is one input to, not a replacement for, opportunity screening.",
-    "The final investment decision is made by a human reviewer.",
-    "The adversary is a one-pass devil's advocate, not a debate agent.",
-    "Adversarial objections are verified by the same truth-gap Judge used for normal claim verification.",
-    "The optional verdict brief summarizes verified attacks for readability but does not decide who won.",
-    "Operational traces record stage metadata, input/output identifiers, and failures; they never expose model chain-of-thought.",
-    "Backend owns durable workflow state, human decisions, activation, and outcome feedback; the AI service owns bounded analysis stages."
+    "The public product API is /api. Frontend mocks must use the canonical bodies in data/fixtures.",
+    "The backend owns SQLite Memory, ingestion and identity resolution, Founder Score persistence, endpoint orchestration, the human gate, audit and metrics, and the deterministic Decision Brief.",
+    "The AI lane owns fixed extractor, query, screen, diligence, memo, adversary, and batched adversary-verification stages. It never owns a human decision.",
+    "There is no debate loop, no agent swarm, and no LLM winner declaration.",
+    "Every factual AI output is constrained by supplied Claims and Memory Signals. Missing evidence is uncertainty, not a negative fact.",
+    "All timestamps are ISO 8601 UTC strings. Arrays are never null. Status is only the human gate status."
   ],
+  "models": {
+    "extract": "gpt-5.6-luna",
+    "query": "gpt-5.6-luna",
+    "screen": "gpt-5.6-terra",
+    "diligence": "gpt-5.6-terra",
+    "memo": "gpt-5.6-terra",
+    "adversary": "gpt-5.6-terra",
+    "verify_adversary": "gpt-5.6-terra"
+  },
   "enums": {
-    "job_status": [
-      "queued",
-      "running",
-      "succeeded",
-      "failed",
-      "cancelled"
-    ],
-    "deal_status": [
-      "draft",
-      "researching",
-      "screened",
-      "memo_ready",
-      "counter_case_ready",
-      "review_ready",
-      "approved",
-      "rejected",
-      "watchlist",
-      "needs_more_research"
-    ],
-    "recommendation": [
-      "approve",
-      "reject",
-      "watchlist",
-      "needs_more_research"
-    ],
-    "deal_origin": [
-      "inbound",
-      "outbound_activated"
-    ],
-    "screening_axis": [
-      "founder",
-      "market",
-      "product",
-      "traction",
-      "business_model",
-      "fundraising",
-      "risk"
-    ],
-    "opportunity_axis": [
-      "founder",
-      "market",
-      "idea_market"
-    ],
-    "axis_outlook": [
-      "bullish",
-      "neutral",
-      "bear"
-    ],
-    "trend": [
-      "improving",
-      "stable",
-      "declining",
-      "unknown"
-    ],
-    "evidence_type": [
-      "company",
-      "founder",
-      "market",
-      "product",
-      "traction",
-      "competition",
-      "business_model",
-      "fundraising",
-      "risk",
-      "unknown"
-    ],
-    "confidence": [
-      "low",
-      "medium",
-      "high"
-    ],
-    "trust_status": [
-      "unverified",
-      "internally_consistent",
-      "externally_verified",
-      "contradicted"
-    ],
-    "sourcing_signal": [
-      "europe_location",
-      "technical_founder",
-      "ai_infrastructure",
-      "execution",
-      "product_traction",
-      "public_vc_funding",
-      "accelerator"
-    ],
-    "candidate_status": [
-      "candidate",
-      "needs_review",
-      "excluded"
-    ],
-    "candidate_lifecycle_status": [
-      "discovered",
-      "reviewed",
-      "activation_pending",
-      "outreach_sent",
-      "applied",
-      "archived"
-    ],
-    "sourcing_run_status": [
-      "queued",
-      "running",
-      "completed",
-      "failed",
-      "cancelled"
-    ],
-    "activation_status": [
-      "pending_review",
-      "approved_for_outreach",
-      "outreach_sent",
-      "application_received",
-      "declined",
-      "archived"
-    ],
-    "thesis_criterion_mode": [
-      "hard_filter",
-      "ranking_signal",
-      "human_confirmation"
-    ],
-    "source_channel": [
-      "web_search",
-      "github",
-      "hacker_news",
-      "product_launch",
-      "hackathon",
-      "paper_or_patent",
-      "accelerator",
-      "company_submission",
-      "manual_research",
-      "other"
-    ],
-    "trace_event_type": [
-      "stage_started",
-      "stage_completed",
-      "stage_failed",
-      "human_decision"
-    ],
-    "sourcing_outcome": [
-      "unreviewed",
-      "archived",
-      "activated",
-      "application_received",
-      "screened",
-      "approved",
-      "rejected",
-      "watchlist"
-    ],
-    "eligibility_status": [
-      "supported",
-      "missing",
-      "no_public_evidence",
-      "public_vc_funding_found",
-      "insufficient_coverage"
-    ],
-    "freshness": [
-      "current",
-      "stale",
-      "unknown"
-    ],
-    "objection_badge": [
-      "verified",
-      "unverified",
-      "speculation"
-    ],
-    "brief_signal": [
-      "memo_still_strong",
-      "counter_case_serious",
-      "needs_human_diligence"
-    ],
-    "decision_impact": [
-      "none",
-      "minor",
-      "major",
-      "blocking"
-    ],
-    "source_kind": [
-      "company_site",
-      "founder_profile",
-      "news",
-      "investor_page",
-      "product_page",
-      "review",
-      "market_report",
-      "regulatory",
-      "social",
-      "github",
-      "paper",
-      "patent",
-      "hackathon",
-      "accelerator",
-      "product_launch",
-      "other"
-    ]
+    "origin": ["github", "hn", "inbound", "synthetic"],
+    "claim_type": ["traction", "team", "market", "product"],
+    "human_status": ["open", "approved", "rejected"],
+    "trend": ["up", "flat", "down"],
+    "market_rating": ["bullish", "neutral", "bear"],
+    "idea_verdict": ["survives", "pivot", "fails"],
+    "claim_verdict": ["supported", "contradicted", "unverifiable"],
+    "trust": ["high", "med", "low"],
+    "risk_appetite": ["low", "medium", "high"],
+    "attack_label": ["evidence-backed", "speculation"],
+    "attack_verification": ["verified", "unverified", "n/a"],
+    "contested_severity": ["red", "yellow", "dim"]
   },
   "schemas": {
-    "DealIntake": {
+    "EmptyObject": {"type": "object", "additionalProperties": false},
+    "OkResponse": {
       "type": "object",
-      "required": [
-        "company_name"
-      ],
+      "required": ["ok"],
+      "properties": {"ok": {"type": "boolean", "const": true}}
+    },
+    "Signal": {
+      "type": "object",
+      "required": ["signal_id", "ts", "source", "text", "url"],
       "properties": {
-        "company_name": {
-          "type": "string",
-          "example": "Acme AI"
-        },
-        "company_url": {
-          "type": "string",
-          "format": "uri",
-          "nullable": true,
-          "example": "https://example.com"
-        },
-        "short_description": {
-          "type": "string",
-          "nullable": true
-        },
-        "founder_names": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "deck_text": {
-          "type": "string",
-          "nullable": true
-        },
-        "submitted_by": {
-          "type": "string",
-          "nullable": true
-        },
-        "origin": {
-          "$ref": "#/enums/deal_origin",
-          "nullable": true
-        },
-        "sourcing_candidate_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "thesis_id": {
-          "type": "string",
-          "nullable": true,
-          "description": "The persisted thesis version that sourced or screened this deal."
-        },
-        "candidate_activation_id": {
-          "type": "string",
-          "nullable": true
-        }
+        "signal_id": {"type": "string"},
+        "ts": {"type": "string", "format": "date-time"},
+        "source": {"type": "string"},
+        "text": {"type": "string"},
+        "url": {"type": ["string", "null"], "format": "uri"}
       }
     },
-    "Deal": {
+    "Claim": {
       "type": "object",
-      "required": [
-        "deal_id",
-        "status",
-        "intake",
-        "created_at",
-        "updated_at"
-      ],
+      "required": ["claim_id", "type", "text", "source_span"],
       "properties": {
-        "deal_id": {
-          "type": "string",
-          "example": "deal_01JABC123"
-        },
-        "status": {
-          "$ref": "#/enums/deal_status"
-        },
-        "intake": {
-          "$ref": "#/schemas/DealIntake"
-        },
-        "origin": {
-          "$ref": "#/enums/deal_origin",
-          "nullable": true
-        },
-        "thesis_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "candidate_activation_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "claim_id": {"type": "string"},
+        "type": {"enum_ref": "claim_type"},
+        "text": {"type": "string"},
+        "source_span": {"type": ["string", "null"]}
       }
     },
-    "Job": {
+    "QueryFilter": {
       "type": "object",
-      "required": [
-        "job_id",
-        "deal_id",
-        "job_type",
-        "status",
-        "created_at",
-        "updated_at"
-      ],
+      "required": ["technical_founder", "sectors", "geos", "shipped_within_days", "prior_vc"],
       "properties": {
-        "job_id": {
-          "type": "string",
-          "example": "job_01JABC456"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "job_type": {
-          "type": "string",
-          "example": "research"
-        },
-        "status": {
-          "$ref": "#/enums/job_status"
-        },
-        "progress_percent": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "message": {
-          "type": "string",
-          "nullable": true
-        },
-        "error": {
-          "type": "string",
-          "nullable": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "technical_founder": {"type": ["boolean", "null"]},
+        "sectors": {"type": "array", "items": {"type": "string"}},
+        "geos": {"type": "array", "items": {"type": "string"}},
+        "shipped_within_days": {"type": ["integer", "null"], "minimum": 0},
+        "prior_vc": {"type": ["boolean", "null"]}
       }
     },
-    "SourcingJob": {
+    "Thesis": {
       "type": "object",
-      "required": [
-        "sourcing_job_id",
-        "thesis_id",
-        "status",
-        "created_at",
-        "updated_at"
-      ],
+      "required": ["sectors", "stage", "geo", "check_size", "risk_appetite"],
       "properties": {
-        "sourcing_job_id": {
-          "type": "string",
-          "example": "source_job_01JABC456"
-        },
-        "sourcing_run_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "thesis_id": {
-          "type": "string"
-        },
-        "thesis_version": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "status": {
-          "$ref": "#/enums/sourcing_run_status"
-        },
-        "progress_percent": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "message": {
-          "type": "string",
-          "nullable": true
-        },
-        "error": {
-          "type": "string",
-          "nullable": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "sectors": {"type": "array", "items": {"type": "string"}},
+        "stage": {"type": "string"},
+        "geo": {"type": "array", "items": {"type": "string"}},
+        "check_size": {"type": "integer", "const": 100000},
+        "risk_appetite": {"enum_ref": "risk_appetite"}
       }
     },
-    "Source": {
+    "Profile": {
       "type": "object",
-      "required": [
-        "source_id",
-        "url",
-        "title",
-        "kind",
-        "fetched_at"
-      ],
+      "required": ["founder_id", "name", "headline", "location", "origin", "bio"],
       "properties": {
-        "source_id": {
-          "type": "string",
-          "example": "src_001"
-        },
-        "url": {
-          "type": "string",
-          "format": "uri"
-        },
-        "title": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/enums/source_kind"
-        },
-        "fetched_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "http_status": {
-          "type": "integer",
-          "nullable": true
-        },
-        "canonical_url": {
-          "type": "string",
-          "format": "uri",
-          "nullable": true,
-          "description": "Final canonical URL after redirects or normalization."
-        },
-        "content_hash": {
-          "type": "string",
-          "nullable": true,
-          "description": "Hash of the bounded raw text used for deduplication."
-        },
-        "published_at": {
-          "type": "string",
-          "format": "date-time",
-          "nullable": true
-        },
-        "raw_document_id": {
-          "type": "string",
-          "nullable": true,
-          "description": "Backend-owned reference to retained raw source content when storage is permitted."
-        },
-        "channel": {
-          "$ref": "#/enums/source_channel"
-        }
+        "founder_id": {"type": "string"},
+        "name": {"type": "string"},
+        "headline": {"type": ["string", "null"]},
+        "location": {"type": ["string", "null"]},
+        "origin": {"enum_ref": "origin"},
+        "bio": {"type": ["string", "null"]}
       }
     },
-    "ThesisCriterion": {
+    "FounderScore": {
       "type": "object",
-      "required": [
-        "criterion_id",
-        "label",
-        "mode"
-      ],
+      "required": ["score", "band", "trend"],
       "properties": {
-        "criterion_id": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "mode": {
-          "$ref": "#/enums/thesis_criterion_mode"
-        },
-        "expected_value": {
-          "type": "string",
-          "nullable": true
-        },
-        "rationale": {
-          "type": "string",
-          "nullable": true
-        }
+        "score": {"type": "number", "minimum": 0, "maximum": 100},
+        "band": {"type": "integer", "minimum": 5, "maximum": 30},
+        "trend": {"enum_ref": "trend"}
       }
     },
-    "ThesisInput": {
+    "Axes": {
       "type": "object",
-      "required": [
-        "thesis"
-      ],
+      "required": ["founder", "market", "idea_vs_market"],
       "properties": {
-        "thesis": {
-          "type": "string",
-          "example": "Find technical founders in Europe working on AI infrastructure with execution signals, no public VC funding, and product traction."
-        },
-        "sector": {
-          "type": "string",
-          "nullable": true,
-          "example": "AI infrastructure"
-        },
-        "geography": {
-          "type": "string",
-          "nullable": true,
-          "example": "Europe"
-        },
-        "stage": {
-          "type": "string",
-          "nullable": true,
-          "example": "pre-seed"
-        },
-        "check_size_usd": {
-          "type": "integer",
-          "nullable": true,
-          "example": 100000
-        },
-        "ownership_target_percent": {
-          "type": "number",
-          "nullable": true
-        },
-        "risk_appetite": {
-          "type": "string",
-          "nullable": true
-        },
-        "required_signals": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "criteria": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/ThesisCriterion"
-          },
-          "description": "Criteria are explicit about whether they filter, rank, or require human confirmation."
-        },
-        "max_candidates": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 50,
-          "default": 20
-        }
-      }
-    },
-    "InvestmentThesis": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/ThesisInput"
-        },
-        {
+        "founder": {
           "type": "object",
-          "required": [
-            "thesis_id",
-            "version",
-            "created_at",
-            "updated_at"
-          ],
+          "required": ["score", "trend", "rationale"],
           "properties": {
-            "thesis_id": {
-              "type": "string",
-              "example": "thesis_01JABC123"
-            },
-            "version": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "created_at": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "updated_at": {
-              "type": "string",
-              "format": "date-time"
-            }
-          }
-        }
-      ]
-    },
-    "DiscoveryQuery": {
-      "type": "object",
-      "required": [
-        "query_id",
-        "query",
-        "focus"
-      ],
-      "properties": {
-        "query_id": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "focus": {
-          "$ref": "#/enums/sourcing_signal"
-        }
-      }
-    },
-    "FounderReference": {
-      "type": "object",
-      "required": [
-        "founder_id",
-        "display_name",
-        "resolution_confidence",
-        "resolution_note"
-      ],
-      "properties": {
-        "founder_id": {
-          "type": "string"
-        },
-        "display_name": {
-          "type": "string"
-        },
-        "aliases": {
-          "type": "array",
-          "items": {
-            "type": "string"
+            "score": {"type": "number", "minimum": 0, "maximum": 10},
+            "trend": {"enum_ref": "trend"},
+            "rationale": {"type": "string"}
           }
         },
-        "resolution_confidence": {
-          "$ref": "#/enums/confidence"
-        },
-        "resolution_note": {
-          "type": "string",
-          "description": "Name-only matches are provisional and require human merge confirmation when ambiguous."
-        }
-      }
-    },
-    "CandidateEvidence": {
-      "type": "object",
-      "required": [
-        "evidence_id",
-        "candidate_id",
-        "source_id",
-        "source_url",
-        "signal_type",
-        "claim",
-        "quote",
-        "confidence",
-        "trust_score",
-        "trust_status",
-        "captured_at"
-      ],
-      "properties": {
-        "evidence_id": {
-          "type": "string"
-        },
-        "candidate_id": {
-          "type": "string"
-        },
-        "source_id": {
-          "type": "string"
-        },
-        "source_url": {
-          "type": "string",
-          "format": "uri"
-        },
-        "source_title": {
-          "type": "string",
-          "nullable": true
-        },
-        "signal_type": {
-          "$ref": "#/enums/sourcing_signal"
-        },
-        "claim": {
-          "type": "string"
-        },
-        "quote": {
-          "type": "string"
-        },
-        "confidence": {
-          "$ref": "#/enums/confidence"
-        },
-        "trust_score": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "trust_status": {
-          "$ref": "#/enums/trust_status"
-        },
-        "contradicted_by_evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "published_at": {
-          "type": "string",
-          "format": "date-time",
-          "nullable": true
-        },
-        "captured_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "Candidate": {
-      "type": "object",
-      "required": [
-        "candidate_id",
-        "company_name",
-        "founder_names",
-        "founder_refs",
-        "lifecycle_status",
-        "evidence_ids",
-        "source_ids"
-      ],
-      "properties": {
-        "candidate_id": {
-          "type": "string"
-        },
-        "company_name": {
-          "type": "string"
-        },
-        "company_url": {
-          "type": "string",
-          "format": "uri",
-          "nullable": true
-        },
-        "founder_names": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "founder_refs": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/FounderReference"
-          }
-        },
-        "lifecycle_status": {
-          "$ref": "#/enums/candidate_lifecycle_status"
-        },
-        "evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "source_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "CandidateEligibility": {
-      "type": "object",
-      "required": [
-        "criterion",
-        "status",
-        "evidence_ids",
-        "note"
-      ],
-      "properties": {
-        "criterion": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/enums/eligibility_status"
-        },
-        "evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "note": {
-          "type": "string"
-        }
-      }
-    },
-    "RankedCandidate": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/Candidate"
-        },
-        {
+        "market": {
           "type": "object",
-          "required": [
-            "fit_score",
-            "status",
-            "manual_review_required",
-            "eligibility",
-            "rank"
-          ],
+          "required": ["rating", "rationale"],
           "properties": {
-            "fit_score": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 100
-            },
-            "status": {
-              "$ref": "#/enums/candidate_status"
-            },
-            "manual_review_required": {
-              "type": "boolean"
-            },
-            "eligibility": {
-              "type": "array",
-              "items": {
-                "$ref": "#/schemas/CandidateEligibility"
-              }
-            },
-            "rank": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        }
-      ]
-    },
-    "CandidateDiscoveryResult": {
-      "type": "object",
-      "required": [
-        "sourcing_run_id",
-        "thesis",
-        "query_plan",
-        "required_signals",
-        "candidates",
-        "sources",
-        "evidence",
-        "limitations",
-        "created_at"
-      ],
-      "properties": {
-        "sourcing_run_id": {
-          "type": "string"
-        },
-        "thesis_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "thesis_version": {
-          "type": "integer",
-          "nullable": true,
-          "minimum": 1
-        },
-        "thesis": {
-          "type": "string"
-        },
-        "query_plan": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/DiscoveryQuery"
+            "rating": {"enum_ref": "market_rating"},
+            "rationale": {"type": "string"}
           }
         },
-        "required_signals": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Candidate"
-          }
-        },
-        "sources": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Source"
-          }
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/CandidateEvidence"
-          }
-        },
-        "limitations": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "SourcingPlan": {
-      "type": "object",
-      "required": [
-        "sourcing_run_id",
-        "thesis",
-        "required_signals",
-        "max_candidates",
-        "queries",
-        "limitations",
-        "created_at"
-      ],
-      "properties": {
-        "sourcing_run_id": {
-          "type": "string"
-        },
-        "thesis_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "thesis_version": {
-          "type": "integer",
-          "nullable": true,
-          "minimum": 1
-        },
-        "thesis": {
-          "type": "string"
-        },
-        "required_signals": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "max_candidates": {
-          "type": "integer"
-        },
-        "queries": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/DiscoveryQuery"
-          }
-        },
-        "limitations": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "CandidateRankingResult": {
-      "type": "object",
-      "required": [
-        "sourcing_run_id",
-        "thesis",
-        "ranked_candidates",
-        "limitations",
-        "created_at"
-      ],
-      "properties": {
-        "sourcing_run_id": {
-          "type": "string"
-        },
-        "thesis_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "thesis_version": {
-          "type": "integer",
-          "nullable": true,
-          "minimum": 1
-        },
-        "thesis": {
-          "type": "string"
-        },
-        "ranked_candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/RankedCandidate"
-          }
-        },
-        "limitations": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "CrawlResult": {
-      "type": "object",
-      "required": [
-        "documents",
-        "failures"
-      ],
-      "properties": {
-        "documents": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "source",
-              "page_text"
-            ],
-            "properties": {
-              "source": {
-                "$ref": "#/schemas/Source"
-              },
-              "page_text": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "failures": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "url",
-              "reason"
-            ],
-            "properties": {
-              "url": {
-                "type": "string",
-                "format": "uri"
-              },
-              "reason": {
-                "type": "string"
-              }
-            }
-          }
-        }
-      }
-    },
-    "FounderProfile": {
-      "type": "object",
-      "required": [
-        "founder_id",
-        "founder_name",
-        "founder_score",
-        "score_history",
-        "milestones",
-        "evidence",
-        "updated_at"
-      ],
-      "properties": {
-        "founder_id": {
-          "type": "string"
-        },
-        "founder_name": {
-          "type": "string"
-        },
-        "aliases": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "identity_resolution": {
-          "$ref": "#/schemas/FounderReference"
-        },
-        "founder_score": {
+        "idea_vs_market": {
           "type": "object",
-          "required": [
-            "score",
-            "confidence",
-            "trend",
-            "factors",
-            "uncertainty",
-            "updated_at"
-          ],
+          "required": ["verdict", "rationale"],
           "properties": {
-            "score": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 100
-            },
-            "confidence": {
-              "$ref": "#/enums/confidence"
-            },
-            "trend": {
-              "$ref": "#/enums/trend"
-            },
-            "factors": {
-              "type": "array"
-            },
-            "uncertainty": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "updated_at": {
-              "type": "string",
-              "format": "date-time"
-            }
-          }
-        },
-        "score_history": {
-          "type": "array"
-        },
-        "milestones": {
-          "type": "array"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/MemoryClaim"
-          }
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "EvidenceValidationResult": {
-      "type": "object",
-      "required": [
-        "validation_id",
-        "deal_id",
-        "evidence",
-        "contradicted_count",
-        "created_at"
-      ],
-      "properties": {
-        "validation_id": {
-          "type": "string"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Evidence"
-          }
-        },
-        "contradicted_count": {
-          "type": "integer"
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "ResearchPlan": {
-      "type": "object",
-      "required": [
-        "queries",
-        "target_urls",
-        "research_priorities"
-      ],
-      "properties": {
-        "queries": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "target_urls": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "uri"
-          }
-        },
-        "research_priorities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/enums/evidence_type"
+            "verdict": {"enum_ref": "idea_verdict"},
+            "rationale": {"type": "string"}
           }
         }
       }
     },
-    "EvidenceExtractionResult": {
+    "DiligenceClaim": {
       "type": "object",
-      "required": [
-        "evidence"
-      ],
+      "required": ["claim_id", "verdict", "trust", "evidence", "note"],
       "properties": {
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Evidence"
-          }
-        }
+        "claim_id": {"type": "string"},
+        "verdict": {"enum_ref": "claim_verdict"},
+        "trust": {"enum_ref": "trust"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "note": {"type": "string"}
       }
     },
-    "MemoryClaim": {
+    "Diligence": {
       "type": "object",
-      "required": [
-        "evidence_id",
-        "source_id",
-        "source_url",
-        "claim",
-        "quote",
-        "evidence_type",
-        "confidence",
-        "trust_score",
-        "trust_status",
-        "freshness",
-        "captured_at"
-      ],
+      "required": ["claims", "gaps"],
       "properties": {
-        "evidence_id": {
-          "type": "string"
-        },
-        "deal_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "candidate_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "founder_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "source_id": {
-          "type": "string"
-        },
-        "source_url": {
-          "type": "string",
-          "format": "uri"
-        },
-        "source_title": {
-          "type": "string",
-          "nullable": true
-        },
-        "claim": {
-          "type": "string"
-        },
-        "quote": {
-          "type": "string"
-        },
-        "evidence_type": {
-          "$ref": "#/enums/evidence_type"
-        },
-        "confidence": {
-          "$ref": "#/enums/confidence"
-        },
-        "trust_score": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "trust_status": {
-          "$ref": "#/enums/trust_status"
-        },
-        "contradicted_by_evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "freshness": {
-          "$ref": "#/enums/freshness"
-        },
-        "captured_at": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/DiligenceClaim"}},
+        "gaps": {"type": "array", "items": {"type": "string"}}
       }
     },
-    "Evidence": {
+    "Recommendation": {
       "type": "object",
-      "required": [
-        "evidence_id",
-        "deal_id",
-        "source_id",
-        "source_url",
-        "claim",
-        "quote",
-        "evidence_type",
-        "confidence",
-        "trust_score",
-        "trust_status",
-        "freshness",
-        "captured_at"
-      ],
+      "required": ["invest", "amount", "rationale", "based_on"],
       "properties": {
-        "evidence_id": {
-          "type": "string",
-          "example": "ev_001"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "source_id": {
-          "type": "string"
-        },
-        "source_url": {
-          "type": "string",
-          "format": "uri"
-        },
-        "source_title": {
-          "type": "string",
-          "nullable": true
-        },
-        "claim": {
-          "type": "string"
-        },
-        "quote": {
-          "type": "string"
-        },
-        "evidence_type": {
-          "$ref": "#/enums/evidence_type"
-        },
-        "confidence": {
-          "$ref": "#/enums/confidence"
-        },
-        "trust_score": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Per-claim Trust Score derived from source quality, corroboration, and contradictions."
-        },
-        "trust_status": {
-          "$ref": "#/enums/trust_status"
-        },
-        "contradicted_by_evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "freshness": {
-          "$ref": "#/enums/freshness"
-        },
-        "captured_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "AxisScore": {
-      "type": "object",
-      "required": [
-        "axis",
-        "score",
-        "rationale",
-        "evidence_ids"
-      ],
-      "properties": {
-        "axis": {
-          "$ref": "#/enums/screening_axis"
-        },
-        "score": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "rationale": {
-          "type": "string"
-        },
-        "evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "missing_evidence": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "OpportunityAxisScore": {
-      "type": "object",
-      "required": [
-        "axis",
-        "outlook",
-        "trend",
-        "rationale",
-        "evidence_ids",
-        "missing_evidence"
-      ],
-      "properties": {
-        "axis": {
-          "$ref": "#/enums/opportunity_axis"
-        },
-        "outlook": {
-          "$ref": "#/enums/axis_outlook"
-        },
-        "trend": {
-          "$ref": "#/enums/trend"
-        },
-        "rationale": {
-          "type": "string"
-        },
-        "evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "missing_evidence": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "founder_score": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100,
-          "nullable": true
-        }
-      }
-    },
-    "ScreeningResult": {
-      "type": "object",
-      "required": [
-        "deal_id",
-        "axis_scores",
-        "opportunity_axes",
-        "weakest_opportunity_axis",
-        "weakest_axis",
-        "selected_counter_case_lens"
-      ],
-      "properties": {
-        "deal_id": {
-          "type": "string"
-        },
-        "axis_scores": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/AxisScore"
-          }
-        },
-        "opportunity_axes": {
-          "type": "array",
-          "minItems": 3,
-          "maxItems": 3,
-          "items": {
-            "$ref": "#/schemas/OpportunityAxisScore"
-          },
-          "description": "The three independent, non-averaged opportunity axes required by the challenge."
-        },
-        "weakest_opportunity_axis": {
-          "$ref": "#/enums/opportunity_axis",
-          "description": "The weakest of the three decision axes; it deterministically selects the counter-case focus."
-        },
-        "weakest_axis": {
-          "$ref": "#/enums/screening_axis",
-          "description": "Supporting diagnostic lens derived from the weakest opportunity axis."
-        },
-        "selected_counter_case_lens": {
-          "$ref": "#/enums/screening_axis"
-        },
-        "recommendation_basis": {
-          "type": "string",
-          "description": "Explains the decision from independent axes. It must not be an averaged score."
-        }
+        "invest": {"type": "boolean"},
+        "amount": {"type": "integer", "const": 100000},
+        "rationale": {"type": "string"},
+        "based_on": {"type": "array", "items": {"type": "string"}}
       }
     },
     "Memo": {
       "type": "object",
-      "required": [
-        "memo_id",
-        "deal_id",
-        "recommendation",
-        "summary",
-        "company_snapshot",
-        "investment_thesis",
-        "swot",
-        "problem_product",
-        "traction_kpis",
-        "key_risks",
-        "diligence_questions",
-        "diligence_log",
-        "data_gaps",
-        "evidence_ids",
-        "created_at"
-      ],
+      "required": ["memo_id", "sections", "recommendation"],
       "properties": {
-        "memo_id": {
-          "type": "string",
-          "example": "memo_001"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "recommendation": {
-          "$ref": "#/enums/recommendation"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "company_snapshot": {
-          "type": "string"
-        },
-        "investment_thesis": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "swot": {
+        "memo_id": {"type": "string"},
+        "sections": {
           "type": "object",
-          "required": [
-            "strengths",
-            "weaknesses",
-            "opportunities",
-            "risks"
-          ],
+          "required": ["snapshot", "hypotheses", "swot", "problem_product", "traction_kpis"],
           "properties": {
-            "strengths": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "weaknesses": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "opportunities": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "risks": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
+            "snapshot": {"type": "string"},
+            "hypotheses": {"type": "string"},
+            "swot": {"type": "string"},
+            "problem_product": {"type": "string"},
+            "traction_kpis": {"type": "string"}
           }
         },
-        "problem_product": {
-          "type": "string"
-        },
-        "traction_kpis": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "key_risks": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "diligence_questions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "diligence_log": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "area",
-              "status",
-              "evidence_ids"
-            ],
-            "properties": {
-              "area": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "checked",
-                  "open",
-                  "not_disclosed"
-                ]
-              },
-              "evidence_ids": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "note": {
-                "type": "string",
-                "nullable": true
-              }
-            }
-          }
-        },
-        "data_gaps": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "recommendation": {"$ref": "#/schemas/Recommendation"}
       }
     },
     "AdversarialObjection": {
       "type": "object",
-      "required": [
-        "objection_id",
-        "title",
-        "argument",
-        "severity",
-        "evidence_ids",
-        "is_speculation"
-      ],
+      "required": ["text", "targets", "evidence", "label", "verification"],
       "properties": {
-        "objection_id": {
-          "type": "string",
-          "example": "obj_001"
-        },
-        "title": {
-          "type": "string"
-        },
-        "argument": {
-          "type": "string"
-        },
-        "severity": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5
-        },
-        "evidence_ids": {
+        "text": {"type": "string"},
+        "targets": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": ["array", "null"], "items": {"type": "string"}},
+        "label": {"enum_ref": "attack_label"},
+        "verification": {"enum_ref": "attack_verification"}
+      }
+    },
+    "Adversarial": {
+      "type": "object",
+      "required": ["persona", "objections"],
+      "properties": {
+        "persona": {"type": "string"},
+        "objections": {"type": "array", "items": {"$ref": "#/schemas/AdversarialObjection"}}
+      }
+    },
+    "DecisionBrief": {
+      "type": "object",
+      "required": ["summary", "contested", "stats"],
+      "properties": {
+        "summary": {"type": "string"},
+        "contested": {
           "type": "array",
           "items": {
-            "type": "string"
-          }
-        },
-        "is_speculation": {
-          "type": "boolean"
-        },
-        "speculation_label": {
-          "type": "string",
-          "nullable": true,
-          "example": "Speculation: risk inferred from missing evidence, not a known fact."
-        }
-      }
-    },
-    "AdversaryReport": {
-      "type": "object",
-      "required": [
-        "report_id",
-        "deal_id",
-        "memo_id",
-        "counter_case_lens",
-        "weakest_axis",
-        "weakest_opportunity_axis",
-        "summary",
-        "objections",
-        "created_at"
-      ],
-      "properties": {
-        "report_id": {
-          "type": "string",
-          "example": "adv_001"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "memo_id": {
-          "type": "string"
-        },
-        "counter_case_lens": {
-          "$ref": "#/enums/screening_axis"
-        },
-        "weakest_axis": {
-          "$ref": "#/enums/screening_axis"
-        },
-        "weakest_opportunity_axis": {
-          "$ref": "#/enums/opportunity_axis"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "objections": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/AdversarialObjection"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "TruthGapCheckedObjection": {
-      "type": "object",
-      "required": [
-        "objection_id",
-        "badge",
-        "hallucination_found",
-        "evidence_relevance",
-        "judge_notes"
-      ],
-      "properties": {
-        "objection_id": {
-          "type": "string"
-        },
-        "badge": {
-          "$ref": "#/enums/objection_badge"
-        },
-        "hallucination_found": {
-          "type": "boolean"
-        },
-        "evidence_relevance": {
-          "type": "string",
-          "enum": [
-            "supports",
-            "partially_supports",
-            "does_not_support",
-            "not_applicable_speculation"
-          ]
-        },
-        "contradicted_by_evidence_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "corrected_argument": {
-          "type": "string",
-          "nullable": true
-        },
-        "judge_notes": {
-          "type": "string"
-        }
-      }
-    },
-    "TruthGapVerificationReport": {
-      "type": "object",
-      "required": [
-        "verification_id",
-        "deal_id",
-        "adversary_report_id",
-        "checked_objections",
-        "created_at"
-      ],
-      "properties": {
-        "verification_id": {
-          "type": "string",
-          "example": "ver_001"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "adversary_report_id": {
-          "type": "string"
-        },
-        "checked_objections": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/TruthGapCheckedObjection"
-          }
-        },
-        "verified_count": {
-          "type": "integer"
-        },
-        "unverified_count": {
-          "type": "integer"
-        },
-        "speculation_count": {
-          "type": "integer"
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "OptionalVerdictBrief": {
-      "type": "object",
-      "required": [
-        "brief_id",
-        "deal_id",
-        "memo_id",
-        "verification_id",
-        "decision_impact",
-        "signal",
-        "summary",
-        "created_at"
-      ],
-      "properties": {
-        "brief_id": {
-          "type": "string",
-          "example": "brief_001"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "memo_id": {
-          "type": "string"
-        },
-        "verification_id": {
-          "type": "string"
-        },
-        "decision_impact": {
-          "$ref": "#/enums/decision_impact"
-        },
-        "signal": {
-          "$ref": "#/enums/brief_signal"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "strongest_verified_objection_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "speculation_to_review": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "CandidateActivation": {
-      "type": "object",
-      "required": [
-        "activation_id",
-        "candidate_id",
-        "status",
-        "created_at",
-        "updated_at"
-      ],
-      "properties": {
-        "activation_id": {
-          "type": "string"
-        },
-        "candidate_id": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/enums/activation_status"
-        },
-        "reviewer_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "outreach_channel": {
-          "type": "string",
-          "nullable": true
-        },
-        "deal_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "notes": {
-          "type": "string",
-          "nullable": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "DecisionAudit": {
-      "type": "object",
-      "required": [
-        "decision_audit_id",
-        "deal_id",
-        "reviewer_id",
-        "decision",
-        "packet_version",
-        "created_at"
-      ],
-      "properties": {
-        "decision_audit_id": {
-          "type": "string"
-        },
-        "deal_id": {
-          "type": "string"
-        },
-        "reviewer_id": {
-          "type": "string"
-        },
-        "decision": {
-          "$ref": "#/enums/recommendation"
-        },
-        "packet_version": {
-          "type": "string"
-        },
-        "notes": {
-          "type": "string",
-          "nullable": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "AuditTraceEvent": {
-      "type": "object",
-      "required": [
-        "event_id",
-        "event_type",
-        "stage",
-        "recorded_at"
-      ],
-      "properties": {
-        "event_id": {
-          "type": "string"
-        },
-        "event_type": {
-          "$ref": "#/enums/trace_event_type"
-        },
-        "stage": {
-          "type": "string"
-        },
-        "run_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "model": {
-          "type": "string",
-          "nullable": true
-        },
-        "input_reference_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "output_reference_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "status_detail": {
-          "type": "string",
-          "nullable": true,
-          "description": "Operational status only; no chain-of-thought or hidden model reasoning."
-        },
-        "recorded_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "SourcingOutcome": {
-      "type": "object",
-      "required": [
-        "outcome_id",
-        "candidate_id",
-        "outcome",
-        "recorded_at"
-      ],
-      "properties": {
-        "outcome_id": {
-          "type": "string"
-        },
-        "candidate_id": {
-          "type": "string"
-        },
-        "sourcing_run_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "channel": {
-          "$ref": "#/enums/source_channel"
-        },
-        "outcome": {
-          "$ref": "#/enums/sourcing_outcome"
-        },
-        "deal_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "recorded_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "CrawlRequest": {
-      "type": "object",
-      "required": [
-        "urls"
-      ],
-      "properties": {
-        "urls": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 12,
-          "items": {
-            "type": "string",
-            "format": "uri"
-          }
-        },
-        "source_kind": {
-          "$ref": "#/enums/source_kind"
-        }
-      }
-    },
-    "CandidateDocument": {
-      "type": "object",
-      "required": [
-        "candidate",
-        "source",
-        "page_text"
-      ],
-      "properties": {
-        "candidate": {
-          "type": "object",
-          "required": [
-            "company_name"
-          ],
-          "properties": {
-            "company_name": {
-              "type": "string"
-            },
-            "company_url": {
-              "type": "string",
-              "format": "uri",
-              "nullable": true
-            },
-            "founder_names": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "founder_aliases": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
+            "type": "object",
+            "required": ["claim_id", "objection_i", "severity"],
+            "properties": {
+              "claim_id": {"type": "string"},
+              "objection_i": {"type": "integer", "minimum": 0},
+              "severity": {"enum_ref": "contested_severity"}
             }
           }
         },
-        "source": {
-          "$ref": "#/schemas/Source"
-        },
-        "page_text": {
-          "type": "string"
-        }
-      }
-    },
-    "CandidateDiscoveryRequest": {
-      "type": "object",
-      "properties": {
-        "thesis": {
-          "type": "string"
-        },
-        "sourcing_plan": {
-          "$ref": "#/schemas/SourcingPlan"
-        },
-        "candidate_documents": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/CandidateDocument"
+        "stats": {
+          "type": "object",
+          "required": ["claims", "contested", "verified_attacks"],
+          "properties": {
+            "claims": {"type": "integer", "minimum": 0},
+            "contested": {"type": "integer", "minimum": 0},
+            "verified_attacks": {"type": "integer", "minimum": 0}
           }
         }
-      },
-      "anyOf": [
-        {
-          "required": [
-            "sourcing_plan"
-          ]
-        },
-        {
-          "required": [
-            "thesis"
-          ]
-        }
-      ]
-    },
-    "CandidateRankingRequest": {
-      "type": "object",
-      "required": [
-        "discovery"
-      ],
-      "properties": {
-        "discovery": {
-          "$ref": "#/schemas/CandidateDiscoveryResult"
-        }
       }
     },
-    "SourcingRunRequest": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/ThesisInput"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "thesis_id": {
-              "type": "string",
-              "nullable": true
-            },
-            "thesis_version": {
-              "type": "integer",
-              "nullable": true,
-              "minimum": 1
-            },
-            "candidate_documents": {
-              "type": "array",
-              "items": {
-                "$ref": "#/schemas/CandidateDocument"
-              }
+    "SetThesisRequest": {
+      "type": "object",
+      "required": ["thesis"],
+      "properties": {"thesis": {"$ref": "#/schemas/Thesis"}}
+    },
+    "GetThesisResponse": {
+      "type": "object",
+      "required": ["thesis"],
+      "properties": {"thesis": {"$ref": "#/schemas/Thesis"}}
+    },
+    "ScanRunResponse": {
+      "type": "object",
+      "required": ["new_founders", "new_signals", "cached"],
+      "properties": {
+        "new_founders": {"type": "integer", "minimum": 0},
+        "new_signals": {"type": "integer", "minimum": 0},
+        "cached": {"type": "boolean"}
+      }
+    },
+    "DashboardFounder": {
+      "type": "object",
+      "required": ["founder_id", "name", "origin", "founder_score", "band", "trend", "top_signals", "has_open_app"],
+      "properties": {
+        "founder_id": {"type": "string"},
+        "name": {"type": "string"},
+        "origin": {"enum_ref": "origin"},
+        "founder_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "band": {"type": "integer", "minimum": 5, "maximum": 30},
+        "trend": {"enum_ref": "trend"},
+        "top_signals": {"type": "array", "items": {"type": "string"}},
+        "has_open_app": {"type": "boolean"}
+      }
+    },
+    "QueryRequest": {
+      "type": "object",
+      "required": ["q"],
+      "properties": {"q": {"type": "string"}}
+    },
+    "QueryResponse": {
+      "type": "object",
+      "required": ["filter", "results"],
+      "properties": {
+        "filter": {"$ref": "#/schemas/QueryFilter"},
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["founder_id", "why_matched"],
+            "properties": {
+              "founder_id": {"type": "string"},
+              "why_matched": {"type": "array", "items": {"type": "string"}}
             }
           }
         }
-      ]
+      }
     },
-    "FounderMemoryUpsertRequest": {
+    "FounderResponse": {
       "type": "object",
-      "required": [
-        "founder_name"
-      ],
+      "required": ["profile", "signals", "score_history", "applications"],
       "properties": {
-        "founder_id": {
-          "type": "string",
-          "nullable": true
-        },
-        "founder_name": {
-          "type": "string"
-        },
-        "aliases": {
+        "profile": {"$ref": "#/schemas/Profile"},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}},
+        "score_history": {
           "type": "array",
           "items": {
-            "type": "string"
-          }
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/MemoryClaim"
-          }
-        },
-        "milestone": {
-          "type": "string",
-          "nullable": true
-        }
-      }
-    },
-    "FounderLookupRequest": {
-      "type": "object",
-      "required": [
-        "founder_name"
-      ],
-      "properties": {
-        "founder_name": {
-          "type": "string"
-        },
-        "aliases": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "ResearchPlanRequest": {
-      "type": "object",
-      "required": [
-        "deal"
-      ],
-      "properties": {
-        "deal": {
-          "$ref": "#/schemas/Deal"
-        }
-      }
-    },
-    "EvidenceExtractionRequest": {
-      "type": "object",
-      "required": [
-        "deal",
-        "source",
-        "page_text"
-      ],
-      "properties": {
-        "deal": {
-          "$ref": "#/schemas/Deal"
-        },
-        "source": {
-          "$ref": "#/schemas/Source"
-        },
-        "page_text": {
-          "type": "string"
-        }
-      }
-    },
-    "EvidenceVerificationRequest": {
-      "type": "object",
-      "required": [
-        "deal",
-        "evidence"
-      ],
-      "properties": {
-        "deal": {
-          "$ref": "#/schemas/Deal"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Evidence"
-          }
-        }
-      }
-    },
-    "ScreeningRequest": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/EvidenceVerificationRequest"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "founder_profiles": {
-              "type": "array",
-              "items": {
-                "$ref": "#/schemas/FounderProfile"
-              }
+            "type": "object",
+            "required": ["ts", "score", "band"],
+            "properties": {
+              "ts": {"type": "string", "format": "date-time"},
+              "score": {"type": "number", "minimum": 0, "maximum": 100},
+              "band": {"type": "integer", "minimum": 5, "maximum": 30}
             }
           }
-        }
-      ]
+        },
+        "applications": {"type": "array", "items": {"type": "string"}}
+      }
     },
-    "MemoWriteRequest": {
+    "ActivateResponse": {
       "type": "object",
-      "required": [
-        "deal",
-        "evidence",
-        "screening"
-      ],
+      "required": ["outreach_draft"],
+      "properties": {"outreach_draft": {"type": "string"}}
+    },
+    "CreateApplicationRequest": {
+      "type": "object",
+      "required": ["company_name", "deck_text"],
       "properties": {
-        "deal": {
-          "$ref": "#/schemas/Deal"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Evidence"
+        "company_name": {"type": "string"},
+        "deck_text": {"type": "string"}
+      }
+    },
+    "CreateApplicationResponse": {
+      "type": "object",
+      "required": ["application_id", "founder_id", "claims"],
+      "properties": {
+        "application_id": {"type": "string"},
+        "founder_id": {"type": "string"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}}
+      }
+    },
+    "ApplicationResponse": {
+      "type": "object",
+      "required": ["application_id", "founder_id", "company_name", "status", "claims", "axes", "diligence", "memo", "adversarial", "decision_brief", "evidence"],
+      "properties": {
+        "application_id": {"type": "string"},
+        "founder_id": {"type": "string"},
+        "company_name": {"type": "string"},
+        "status": {"enum_ref": "human_status"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "axes": {"oneOf": [{"$ref": "#/schemas/Axes"}, {"type": "null"}]},
+        "diligence": {"oneOf": [{"$ref": "#/schemas/Diligence"}, {"type": "null"}]},
+        "memo": {"oneOf": [{"$ref": "#/schemas/Memo"}, {"type": "null"}]},
+        "adversarial": {"oneOf": [{"$ref": "#/schemas/Adversarial"}, {"type": "null"}]},
+        "decision_brief": {"oneOf": [{"$ref": "#/schemas/DecisionBrief"}, {"type": "null"}]},
+        "evidence": {"type": "array", "items": {"$ref": "#/schemas/Signal"}}
+      }
+    },
+    "ScreenResponse": {
+      "type": "object",
+      "required": ["axes"],
+      "properties": {"axes": {"$ref": "#/schemas/Axes"}}
+    },
+    "AdversaryResponse": {
+      "type": "object",
+      "required": ["adversarial", "decision_brief"],
+      "properties": {
+        "adversarial": {"$ref": "#/schemas/Adversarial"},
+        "decision_brief": {"$ref": "#/schemas/DecisionBrief"}
+      }
+    },
+    "DecisionQueueItem": {
+      "type": "object",
+      "required": ["application_id", "company", "recommendation", "memo_id"],
+      "properties": {
+        "application_id": {"type": "string"},
+        "company": {"type": "string"},
+        "recommendation": {"$ref": "#/schemas/Recommendation"},
+        "memo_id": {"type": "string"}
+      }
+    },
+    "DecisionRequest": {
+      "type": "object",
+      "required": ["action", "approver"],
+      "properties": {
+        "action": {"enum": ["approve", "reject"]},
+        "approver": {"type": "string"}
+      }
+    },
+    "DecisionResponse": {
+      "type": "object",
+      "required": ["status", "audit_id"],
+      "properties": {
+        "status": {"enum": ["approved", "rejected"]},
+        "audit_id": {"type": "string"}
+      }
+    },
+    "AuditRecord": {
+      "type": "object",
+      "required": ["ts", "stage", "actor", "action", "detail"],
+      "properties": {
+        "ts": {"type": "string", "format": "date-time"},
+        "stage": {"type": "string"},
+        "actor": {"type": "string"},
+        "action": {"type": "string"},
+        "detail": {"type": "string"}
+      }
+    },
+    "MetricsResponse": {
+      "type": "object",
+      "required": ["signal_to_decision_min", "funnel"],
+      "properties": {
+        "signal_to_decision_min": {"type": ["number", "null"]},
+        "funnel": {
+          "type": "object",
+          "required": ["sourced", "screened", "diligenced", "decided"],
+          "properties": {
+            "sourced": {"type": "integer", "minimum": 0},
+            "screened": {"type": "integer", "minimum": 0},
+            "diligenced": {"type": "integer", "minimum": 0},
+            "decided": {"type": "integer", "minimum": 0}
           }
-        },
-        "screening": {
-          "$ref": "#/schemas/ScreeningResult"
         }
       }
     },
-    "AdversaryWriteRequest": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/MemoWriteRequest"
-        },
-        {
-          "type": "object",
-          "required": [
-            "memo"
-          ],
-          "properties": {
-            "memo": {
-              "$ref": "#/schemas/Memo"
-            }
-          }
-        }
-      ]
-    },
-    "TruthGapRequest": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/AdversaryWriteRequest"
-        },
-        {
-          "type": "object",
-          "required": [
-            "adversary_report"
-          ],
-          "properties": {
-            "adversary_report": {
-              "$ref": "#/schemas/AdversaryReport"
-            }
-          }
-        }
-      ]
-    },
-    "VerdictBriefRequest": {
-      "allOf": [
-        {
-          "$ref": "#/schemas/TruthGapRequest"
-        },
-        {
-          "type": "object",
-          "required": [
-            "truth_gap_verification"
-          ],
-          "properties": {
-            "truth_gap_verification": {
-              "$ref": "#/schemas/TruthGapVerificationReport"
-            }
-          }
-        }
-      ]
-    },
-    "DecisionPacket": {
+    "ExtractRequest": {
       "type": "object",
-      "required": [
-        "deal",
-        "sources",
-        "evidence",
-        "screening",
-        "memo",
-        "adversary_report",
-        "truth_gap_verification"
-      ],
+      "required": ["company_name", "deck_text"],
       "properties": {
-        "deal": {
-          "$ref": "#/schemas/Deal"
-        },
-        "sources": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Source"
-          }
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/Evidence"
-          }
-        },
-        "screening": {
-          "$ref": "#/schemas/ScreeningResult"
-        },
-        "memo": {
-          "$ref": "#/schemas/Memo"
-        },
-        "adversary_report": {
-          "$ref": "#/schemas/AdversaryReport"
-        },
-        "truth_gap_verification": {
-          "$ref": "#/schemas/TruthGapVerificationReport"
-        },
-        "verdict_brief": {
-          "$ref": "#/schemas/OptionalVerdictBrief",
-          "nullable": true
-        },
-        "audit_events": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/AuditTraceEvent"
-          }
-        },
-        "decision_audit": {
-          "$ref": "#/schemas/DecisionAudit",
-          "nullable": true
-        }
+        "company_name": {"type": "string"},
+        "deck_text": {"type": "string"}
+      }
+    },
+    "ExtractResult": {
+      "type": "object",
+      "required": ["founder_name", "claims"],
+      "properties": {
+        "founder_name": {"type": "string"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}}
+      }
+    },
+    "AIQueryRequest": {
+      "type": "object",
+      "required": ["q", "thesis"],
+      "properties": {
+        "q": {"type": "string"},
+        "thesis": {"$ref": "#/schemas/Thesis"}
+      }
+    },
+    "AIScreenRequest": {
+      "type": "object",
+      "required": ["company_name", "claims", "signals", "founder_score", "band", "trend", "thesis"],
+      "properties": {
+        "company_name": {"type": "string"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}},
+        "founder_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "band": {"type": "integer", "minimum": 5, "maximum": 30},
+        "trend": {"enum_ref": "trend"},
+        "thesis": {"$ref": "#/schemas/Thesis"}
+      }
+    },
+    "AIDiligenceRequest": {
+      "type": "object",
+      "required": ["claims", "signals"],
+      "properties": {
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}}
+      }
+    },
+    "AIMemoRequest": {
+      "type": "object",
+      "required": ["company_name", "claims", "diligence", "axes"],
+      "properties": {
+        "company_name": {"type": "string"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "diligence": {"$ref": "#/schemas/Diligence"},
+        "axes": {"$ref": "#/schemas/Axes"}
+      }
+    },
+    "AIAdversaryRequest": {
+      "type": "object",
+      "required": ["memo", "axes", "claims", "signals"],
+      "properties": {
+        "memo": {"$ref": "#/schemas/Memo"},
+        "axes": {"$ref": "#/schemas/Axes"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}}
+      }
+    },
+    "AIVerifyAdversaryRequest": {
+      "type": "object",
+      "required": ["adversarial", "claims", "signals"],
+      "properties": {
+        "adversarial": {"$ref": "#/schemas/Adversarial"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}}
+      }
+    },
+    "AIApplicationRunRequest": {
+      "type": "object",
+      "required": ["company_name", "deck_text", "signals", "founder_score", "band", "trend", "thesis", "include_adversary"],
+      "properties": {
+        "company_name": {"type": "string"},
+        "deck_text": {"type": "string"},
+        "signals": {"type": "array", "items": {"$ref": "#/schemas/Signal"}},
+        "founder_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "band": {"type": "integer", "minimum": 5, "maximum": 30},
+        "trend": {"enum_ref": "trend"},
+        "thesis": {"$ref": "#/schemas/Thesis"},
+        "include_adversary": {"type": "boolean"}
+      }
+    },
+    "AIApplicationRunResult": {
+      "type": "object",
+      "required": ["founder_name", "claims", "axes", "diligence", "memo", "adversarial", "trace"],
+      "properties": {
+        "founder_name": {"type": "string"},
+        "claims": {"type": "array", "items": {"$ref": "#/schemas/Claim"}},
+        "axes": {"$ref": "#/schemas/Axes"},
+        "diligence": {"$ref": "#/schemas/Diligence"},
+        "memo": {"$ref": "#/schemas/Memo"},
+        "adversarial": {"oneOf": [{"$ref": "#/schemas/Adversarial"}, {"type": "null"}]},
+        "trace": {"type": "array", "items": {"type": "string"}}
       }
     }
   },
-  "backend_api": {
+  "product_api": {
     "base_path": "/api",
+    "owner": "backend",
     "endpoints": [
-      {
-        "method": "POST",
-        "path": "/theses",
-        "description": "Create or update the fund-specific sourcing thesis.",
-        "request_schema": "#/schemas/ThesisInput",
-        "response_schema": "#/schemas/InvestmentThesis"
-      },
-      {
-        "method": "POST",
-        "path": "/sourcing/runs",
-        "description": "Start thesis-driven outbound candidate discovery and ranking.",
-        "request_schema": "#/schemas/SourcingRunRequest",
-        "response_schema": "#/schemas/SourcingJob"
-      },
-      {
-        "method": "GET",
-        "path": "/sourcing/runs/{sourcing_run_id}",
-        "description": "Fetch source-backed candidates and their ranking/eligibility status.",
-        "response_schema": "#/schemas/CandidateRankingResult"
-      },
-      {
-        "method": "POST",
-        "path": "/candidates/{candidate_id}/activate",
-        "description": "Record human outreach/activation and convert a candidate into the common deal funnel when an application arrives.",
-        "request_schema": {
-          "type": "object",
-          "required": [
-            "reviewer_id",
-            "status"
-          ],
-          "properties": {
-            "reviewer_id": {
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/enums/activation_status"
-            },
-            "outreach_channel": {
-              "type": "string",
-              "nullable": true
-            },
-            "notes": {
-              "type": "string",
-              "nullable": true
-            }
-          }
-        },
-        "response_schema": "#/schemas/CandidateActivation"
-      },
-      {
-        "method": "POST",
-        "path": "/deals",
-        "description": "Create a deal from reviewer intake.",
-        "request_schema": "#/schemas/DealIntake",
-        "response_schema": "#/schemas/Deal"
-      },
-      {
-        "method": "GET",
-        "path": "/deals/{deal_id}",
-        "description": "Fetch deal metadata and status.",
-        "response_schema": "#/schemas/Deal"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/research",
-        "description": "Start research, crawling, and evidence extraction.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/screen",
-        "description": "Start screening score generation.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/memo",
-        "description": "Start investment memo generation.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/counter-case",
-        "description": "Start devil's advocate and truth-gap verification stages.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/verdict-brief",
-        "description": "Optionally generate a non-authoritative reviewer brief from verified objections.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "GET",
-        "path": "/deals/{deal_id}/packet",
-        "description": "Fetch the full reviewer decision packet.",
-        "response_schema": "#/schemas/DecisionPacket"
-      },
-      {
-        "method": "GET",
-        "path": "/jobs/{job_id}",
-        "description": "Poll async job status.",
-        "response_schema": "#/schemas/Job"
-      },
-      {
-        "method": "POST",
-        "path": "/deals/{deal_id}/decision",
-        "description": "Record the audit-logged human reviewer decision.",
-        "request_schema": {
-          "type": "object",
-          "required": [
-            "decision",
-            "reviewer_id"
-          ],
-          "properties": {
-            "decision": {
-              "$ref": "#/enums/recommendation"
-            },
-            "reviewer_id": {
-              "type": "string"
-            },
-            "notes": {
-              "type": "string",
-              "nullable": true
-            }
-          }
-        },
-        "response_schema": "#/schemas/DecisionAudit"
-      },
-      {
-        "method": "POST",
-        "path": "/sourcing/outcomes",
-        "description": "Record sourcing and activation outcomes for source-channel feedback; this never changes a historical AI output.",
-        "request_schema": "#/schemas/SourcingOutcome",
-        "response_schema": "#/schemas/SourcingOutcome"
-      },
-      {
-        "method": "GET",
-        "path": "/deals/{deal_id}/audit",
-        "description": "Fetch operational stage trace events and human decisions without model chain-of-thought.",
-        "response_schema": {
-          "type": "array",
-          "items": {
-            "$ref": "#/schemas/AuditTraceEvent"
-          }
-        }
-      }
+      {"method": "POST", "path": "/thesis", "request_schema": {"$ref": "#/schemas/SetThesisRequest"}, "response_schema": {"$ref": "#/schemas/OkResponse"}},
+      {"method": "GET", "path": "/thesis", "response_schema": {"$ref": "#/schemas/GetThesisResponse"}},
+      {"method": "POST", "path": "/scan/run", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/ScanRunResponse"}},
+      {"method": "GET", "path": "/dashboard", "response_schema": {"type": "array", "items": {"$ref": "#/schemas/DashboardFounder"}}},
+      {"method": "POST", "path": "/query", "request_schema": {"$ref": "#/schemas/QueryRequest"}, "response_schema": {"$ref": "#/schemas/QueryResponse"}},
+      {"method": "GET", "path": "/founders/{id}", "response_schema": {"$ref": "#/schemas/FounderResponse"}},
+      {"method": "POST", "path": "/founders/{id}/activate", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/ActivateResponse"}},
+      {"method": "POST", "path": "/applications", "request_schema": {"$ref": "#/schemas/CreateApplicationRequest"}, "response_schema": {"$ref": "#/schemas/CreateApplicationResponse"}},
+      {"method": "GET", "path": "/applications/{id}", "response_schema": {"$ref": "#/schemas/ApplicationResponse"}},
+      {"method": "POST", "path": "/applications/{id}/screen", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/ScreenResponse"}},
+      {"method": "POST", "path": "/applications/{id}/diligence", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/Diligence"}},
+      {"method": "POST", "path": "/applications/{id}/memo", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/Memo"}},
+      {"method": "POST", "path": "/applications/{id}/adversary", "request_schema": {"$ref": "#/schemas/EmptyObject"}, "response_schema": {"$ref": "#/schemas/AdversaryResponse"}, "errors": [{"status": 409, "when": "memo is missing"}], "idempotent": true},
+      {"method": "GET", "path": "/decisions/queue", "response_schema": {"type": "array", "items": {"$ref": "#/schemas/DecisionQueueItem"}}},
+      {"method": "POST", "path": "/decisions/{id}/decide", "request_schema": {"$ref": "#/schemas/DecisionRequest"}, "response_schema": {"$ref": "#/schemas/DecisionResponse"}},
+      {"method": "GET", "path": "/audit?founder_id=", "response_schema": {"type": "array", "items": {"$ref": "#/schemas/AuditRecord"}}},
+      {"method": "GET", "path": "/metrics", "response_schema": {"$ref": "#/schemas/MetricsResponse"}}
     ]
   },
   "ai_service_api": {
     "base_path": "/v1/ai",
+    "owner": "ai lane",
+    "integration": "Backend may call these over HTTP or import the same named Python functions from ai_service.pipeline. They are internal contracts, never frontend routes.",
     "endpoints": [
-      {
-        "method": "POST",
-        "path": "/sourcing/plan",
-        "owner": "ai_service",
-        "description": "Turn a configurable investment thesis into explicit, reviewable outbound discovery queries.",
-        "request_schema": "#/schemas/SourcingRunRequest",
-        "response_schema": "#/schemas/SourcingPlan"
-      },
-      {
-        "method": "POST",
-        "path": "/research/crawl",
-        "owner": "ai_service",
-        "description": "Fetch a bounded list of public, robots-permitted source pages for traceable Memory ingestion.",
-        "request_schema": "#/schemas/CrawlRequest",
-        "response_schema": "#/schemas/CrawlResult"
-      },
-      {
-        "method": "POST",
-        "path": "/sourcing/discover",
-        "owner": "ai_service",
-        "description": "Discover source-backed founder/company candidates from supplied crawled documents or live web search.",
-        "request_schema": "#/schemas/CandidateDiscoveryRequest",
-        "response_schema": "#/schemas/CandidateDiscoveryResult"
-      },
-      {
-        "method": "POST",
-        "path": "/sourcing/rank",
-        "owner": "ai_service",
-        "description": "Rank candidates against thesis signals while explicitly marking no-public-funding findings as human-confirmation required.",
-        "request_schema": "#/schemas/CandidateRankingRequest",
-        "response_schema": "#/schemas/CandidateRankingResult"
-      },
-      {
-        "method": "POST",
-        "path": "/sourcing/run",
-        "owner": "ai_service",
-        "description": "Run the complete bounded sourcing workflow: thesis plan, cited discovery, optional source crawling, and evidence-gated ranking.",
-        "request_schema": "#/schemas/SourcingRunRequest",
-        "response_schema": {
-          "type": "object",
-          "required": [
-            "sourcing_plan",
-            "discovery",
-            "ranking"
-          ],
-          "properties": {
-            "sourcing_plan": {
-              "$ref": "#/schemas/SourcingPlan"
-            },
-            "discovery": {
-              "$ref": "#/schemas/CandidateDiscoveryResult"
-            },
-            "ranking": {
-              "$ref": "#/schemas/CandidateRankingResult"
-            },
-            "founder_profiles": {
-              "type": "array",
-              "items": {
-                "$ref": "#/schemas/FounderProfile"
-              }
-            },
-            "audit_events": {
-              "type": "array",
-              "items": {
-                "$ref": "#/schemas/AuditTraceEvent"
-              }
-            }
-          }
-        }
-      },
-      {
-        "method": "POST",
-        "path": "/founders/memory/upsert",
-        "owner": "ai_service",
-        "description": "Persist a founder's evidence, milestones, and Founder Score across opportunities.",
-        "request_schema": "#/schemas/FounderMemoryUpsertRequest",
-        "response_schema": "#/schemas/FounderProfile"
-      },
-      {
-        "method": "POST",
-        "path": "/founders/memory/get",
-        "owner": "ai_service",
-        "description": "Read a persistent founder profile or return a clearly labeled cold-start profile.",
-        "request_schema": "#/schemas/FounderLookupRequest",
-        "response_schema": "#/schemas/FounderProfile"
-      },
-      {
-        "method": "POST",
-        "path": "/founders/memory/resolve",
-        "owner": "ai_service",
-        "description": "Create a provisional founder identity reference; ambiguous normalized-name matches require human merge confirmation.",
-        "request_schema": "#/schemas/FounderLookupRequest",
-        "response_schema": "#/schemas/FounderReference"
-      },
-      {
-        "method": "POST",
-        "path": "/research/plan",
-        "owner": "ai_service",
-        "description": "Create search queries and crawl targets from deal intake.",
-        "request_schema": "#/schemas/ResearchPlanRequest",
-        "response_schema": "#/schemas/ResearchPlan"
-      },
-      {
-        "method": "POST",
-        "path": "/evidence/extract",
-        "owner": "ai_service",
-        "description": "Extract Memory evidence records from crawled text.",
-        "request_schema": "#/schemas/EvidenceExtractionRequest",
-        "response_schema": "#/schemas/EvidenceExtractionResult"
-      },
-      {
-        "method": "POST",
-        "path": "/evidence/verify",
-        "owner": "ai_service",
-        "description": "Apply per-claim Trust Scores and flag direct evidence contradictions before screening.",
-        "request_schema": "#/schemas/EvidenceVerificationRequest",
-        "response_schema": "#/schemas/EvidenceValidationResult"
-      },
-      {
-        "method": "POST",
-        "path": "/screen/score",
-        "owner": "ai_service",
-        "description": "Score the deal across venture screening axes.",
-        "request_schema": "#/schemas/ScreeningRequest",
-        "response_schema": "#/schemas/ScreeningResult"
-      },
-      {
-        "method": "POST",
-        "path": "/memo/write",
-        "owner": "ai_service",
-        "description": "Write the investment memo from evidence and scores.",
-        "request_schema": "#/schemas/MemoWriteRequest",
-        "response_schema": "#/schemas/Memo"
-      },
-      {
-        "method": "POST",
-        "path": "/adversary/write",
-        "owner": "ai_service",
-        "description": "Write the strongest bounded counter-case against investing.",
-        "request_schema": "#/schemas/AdversaryWriteRequest",
-        "response_schema": "#/schemas/AdversaryReport"
-      },
-      {
-        "method": "POST",
-        "path": "/truth-gap/verify",
-        "owner": "ai_service",
-        "description": "Reuse the truth-gap Judge to badge adversarial objections as verified, unverified, or speculation.",
-        "request_schema": "#/schemas/TruthGapRequest",
-        "response_schema": "#/schemas/TruthGapVerificationReport"
-      },
-      {
-        "method": "POST",
-        "path": "/verdict/brief",
-        "owner": "ai_service",
-        "description": "Optionally summarize verified objections for human readability without making the final decision.",
-        "request_schema": "#/schemas/VerdictBriefRequest",
-        "response_schema": "#/schemas/OptionalVerdictBrief"
-      }
+      {"function": "extract_application", "method": "POST", "path": "/extract", "request_schema": {"$ref": "#/schemas/ExtractRequest"}, "response_schema": {"$ref": "#/schemas/ExtractResult"}, "model": "gpt-5.6-luna"},
+      {"function": "parse_query", "method": "POST", "path": "/query", "request_schema": {"$ref": "#/schemas/AIQueryRequest"}, "response_schema": {"$ref": "#/schemas/QueryFilter"}, "model": "gpt-5.6-luna"},
+      {"function": "screen_application", "method": "POST", "path": "/screen", "request_schema": {"$ref": "#/schemas/AIScreenRequest"}, "response_schema": {"$ref": "#/schemas/Axes"}, "model": "gpt-5.6-terra"},
+      {"function": "diligence_claims", "method": "POST", "path": "/diligence", "request_schema": {"$ref": "#/schemas/AIDiligenceRequest"}, "response_schema": {"$ref": "#/schemas/Diligence"}, "model": "gpt-5.6-terra"},
+      {"function": "write_memo", "method": "POST", "path": "/memo", "request_schema": {"$ref": "#/schemas/AIMemoRequest"}, "response_schema": {"$ref": "#/schemas/Memo"}, "model": "gpt-5.6-terra"},
+      {"function": "write_adversary", "method": "POST", "path": "/adversary", "request_schema": {"$ref": "#/schemas/AIAdversaryRequest"}, "response_schema": {"$ref": "#/schemas/Adversarial"}, "model": "gpt-5.6-terra"},
+      {"function": "verify_adversary", "method": "POST", "path": "/adversary/verify", "request_schema": {"$ref": "#/schemas/AIVerifyAdversaryRequest"}, "response_schema": {"$ref": "#/schemas/Adversarial"}, "model": "gpt-5.6-terra", "batch": true},
+      {"function": "run_application_pipeline", "method": "POST", "path": "/application/run", "request_schema": {"$ref": "#/schemas/AIApplicationRunRequest"}, "response_schema": {"$ref": "#/schemas/AIApplicationRunResult"}, "orchestrator": "LangGraph fixed DAG"}
     ]
   },
-  "event_stream": {
-    "transport": "server_sent_events_or_websocket",
-    "event_types": [
-      "job_started",
-      "source_found",
-      "candidate_found",
-      "candidate_ranked",
-      "evidence_added",
-      "founder_memory_updated",
-      "screening_ready",
-      "memo_ready",
-      "counter_case_ready",
-      "verification_ready",
-      "verdict_brief_ready",
-      "packet_ready",
-      "job_failed"
-    ]
+  "invariants": {
+    "identity": "normalized(name) is lowercase with every space and punctuation character removed. Names match if and only if normalized values match; a URL domain can confirm but never override a mismatch. Company name is never identity.",
+    "founder_score": "At each snapshot: score=clamp(35 + 8*source_diversity + 4*signals_last_30d + 2*signals_total,0,100); band=floor(clamp(60/sqrt(n_signals+1),5,30)); trend is up at delta >= 3, down at delta <= -3, otherwise flat.",
+    "extractor": "Deck text is untrusted data. Internal extraction returns founder_name plus typed claims. A source_span must be an exact deck substring after at most one retry. A null-span claim can never be supported or appear in recommendation.based_on.",
+    "diligence": "Resolve and de-duplicate IDs before trust mapping: supported+2 valid signals=high; supported+1=med; supported+0 becomes unverifiable+low; contradicted requires valid contrary signal and is low; all unverifiable claims are low.",
+    "memo": "Memo prose is built only around committed diligence claims. Based_on is deduplicated and contains only supported claims with valid spans. If it becomes empty, invest is false.",
+    "adversary": "Pick persona by weakest axis rank (Founder 0-3/4-7/8-10; Market bear/neutral/bullish; Idea fails/pivot/survives), ties Founder then Market then Idea. One call writes the counter-case; the same judge verifies all evidence-backed objections once in a batch. Invalid/missing evidence makes an objection speculation with verification n/a.",
+    "decision_brief": "Backend builds it in deterministic code, not an LLM. It declares no winner. Its summary is exactly: Decision Brief: {red} red, {yellow} yellow, {dim} dim contested pairs; human review required.",
+    "human_gate": "The backend only moves the $100K on POST /api/decisions/{id}/decide. AI outputs are decision support only."
   },
-  "deterministic_counter_case_lens_selection": {
-    "rule": "Select the weakest independent opportunity axis first, then map it to a functional counter-case focus. This is not a personality or debate role.",
-    "opportunity_axis_tie_breaker_order": [
-      "founder",
-      "market",
-      "idea_market"
-    ],
-    "lens_mapping": {
-      "founder": "founder",
-      "market": "market",
-      "idea_market": "product"
-    }
+  "ownership": {
+    "backend": ["SQLite Memory", "ingest/dedup", "Founder Score", "public /api routes", "human decision", "audit/metrics", "Decision Brief"],
+    "ai": ["fetch/cache adapter", "LLM wrapper", "extract", "query", "screen", "diligence", "memo", "one-pass adversary", "one batched verifier"],
+    "frontend": ["four screens", "mock-first fixtures", "human gate UI", "nullable stage rendering"]
   }
 }

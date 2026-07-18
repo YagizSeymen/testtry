@@ -9,9 +9,11 @@ the opportunity score itself.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +36,9 @@ SIGNAL_TO_EVIDENCE_TYPE = {
 
 
 def _normalise_name(name: str) -> str:
-    return re.sub(r"\s+", " ", name.strip().lower())
+    """Match the person-based identity rule in steps.md exactly."""
+
+    return re.sub(r"[\W_]+", "", name.casefold())
 
 
 def founder_reference(founder_name: str, aliases: list[str] | None = None) -> dict[str, Any]:
@@ -75,6 +79,7 @@ def normalise_memory_claim(item: dict[str, Any], founder_id: str) -> dict[str, A
         "source_id": str(item.get("source_id") or stable_id("src", source_url, item.get("source_title"))),
         "source_url": source_url,
         "source_title": item.get("source_title"),
+        "source": str(item.get("source") or item.get("source_kind") or "other"),
         "claim": claim,
         "quote": str(item.get("quote") or claim),
         "evidence_type": evidence_type,
@@ -131,49 +136,50 @@ def _signal_matches(evidence: dict[str, Any]) -> set[str]:
     return matches
 
 
-def _score(evidence: list[dict[str, Any]]) -> tuple[int, str, list[dict[str, Any]], list[str]]:
-    """Return a fair, monotonic score. Missing public data is never a penalty."""
+def _parse_timestamp(value: Any, fallback: datetime) -> datetime:
+    if not isinstance(value, str):
+        return fallback
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return fallback
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
-    signal_weights = {
-        "technical_execution": 12,
-        "competitive_execution": 9,
-        "technical_depth": 9,
-        "shipping": 12,
-        "commercial_execution": 12,
-        "technical_background": 8,
+
+def _score(evidence: list[dict[str, Any]], snapshot_at: datetime) -> tuple[int, int, dict[str, int], list[str]]:
+    """Implement the deterministic persisted Founder Score from steps.md."""
+
+    by_id = {
+        str(item.get("evidence_id")): item
+        for item in evidence
+        if isinstance(item, dict) and item.get("evidence_id")
     }
-    seen_signals: set[str] = set()
-    factors: list[dict[str, Any]] = []
-    evidence_ids: list[str] = []
-    for item in evidence:
-        if not isinstance(item, dict):
-            continue
-        evidence_id = str(item.get("evidence_id") or "")
-        signals = _signal_matches(item)
-        for signal in sorted(signals - seen_signals):
-            seen_signals.add(signal)
-            factors.append(
-                {
-                    "factor": signal,
-                    "weight": signal_weights[signal],
-                    "evidence_ids": [evidence_id] if evidence_id else [],
-                }
-            )
-        if evidence_id:
-            evidence_ids.append(evidence_id)
-
-    # A cold-start founder receives an explicitly provisional neutral score,
-    # rather than a low score caused by being less visible online.
-    score = min(100, 50 + sum(signal_weights[item["factor"]] for item in factors))
-    confidence = "high" if len(seen_signals) >= 4 else "medium" if len(seen_signals) >= 2 else "low"
+    signals = list(by_id.values())
+    sources = {
+        re.sub(r"\s+", "", str(item.get("source") or item.get("source_kind") or item.get("source_url") or "unknown").casefold())
+        for item in signals
+    }
+    lower_bound = snapshot_at - timedelta(days=30)
+    signals_last_30d = sum(
+        1
+        for item in signals
+        if lower_bound <= _parse_timestamp(item.get("captured_at"), snapshot_at) <= snapshot_at
+    )
+    signals_total = len(signals)
+    source_diversity = len(sources)
+    score = max(0, min(100, 35 + 8 * source_diversity + 4 * signals_last_30d + 2 * signals_total))
+    band = math.floor(max(5, min(30, 60 / math.sqrt(signals_total + 1))))
+    inputs = {
+        "signals_total": signals_total,
+        "source_diversity": source_diversity,
+        "signals_last_30d": signals_last_30d,
+    }
     uncertainty = []
-    if confidence == "low":
-        uncertainty.append(
-            "Public evidence is sparse. This provisional Founder Score is not a negative judgment."
-        )
-    if "commercial_execution" not in seen_signals:
-        uncertainty.append("No public commercial-execution signal has been verified yet.")
-    return score, confidence, factors, uncertainty
+    if signals_total <= 2:
+        uncertainty.append("Evidence density is low; this wide band is uncertainty, not a negative judgment.")
+    if signals_last_30d == 0:
+        uncertainty.append("No Memory signal falls within the last 30 days of this snapshot.")
+    return score, band, inputs, uncertainty
 
 
 def endpoint_founder_memory_upsert(payload: dict[str, Any]) -> dict[str, Any]:
@@ -203,11 +209,13 @@ def endpoint_founder_memory_upsert(payload: dict[str, Any]) -> dict[str, Any]:
             evidence_id = str(item.get("evidence_id") or stable_id("fev", founder_name, item.get("claim")))
             by_id[evidence_id] = {**item, "evidence_id": evidence_id}
         evidence = [normalise_memory_claim(item, profile_founder_id) for item in by_id.values()]
-        score, confidence, factors, uncertainty = _score(evidence)
+        timestamp = str(payload.get("snapshot_ts") or now_iso())
+        snapshot_at = _parse_timestamp(payload.get("snapshot_ts"), _parse_timestamp(timestamp, datetime.now(timezone.utc)))
+        score, band, score_inputs, uncertainty = _score(evidence, snapshot_at)
         previous_score = existing.get("founder_score") if isinstance(existing.get("founder_score"), dict) else None
         prior_value = int(previous_score.get("score", score)) if previous_score else score
-        trend = "improving" if score > prior_value else "declining" if score < prior_value else "stable"
-        timestamp = now_iso()
+        delta = score - prior_value
+        trend = "up" if delta >= 3 else "down" if delta <= -3 else "flat"
         milestone = payload.get("milestone")
         milestones = existing.get("milestones", []) if isinstance(existing.get("milestones"), list) else []
         if isinstance(milestone, str) and milestone.strip():
@@ -221,15 +229,15 @@ def endpoint_founder_memory_upsert(payload: dict[str, Any]) -> dict[str, Any]:
             "identity_resolution": founder_reference(founder_name, combined_aliases),
             "founder_score": {
                 "score": score,
-                "confidence": confidence,
+                "band": band,
                 "trend": trend,
-                "factors": factors,
+                "inputs": score_inputs,
                 "uncertainty": uncertainty,
                 "updated_at": timestamp,
             },
             "score_history": [
                 *(existing.get("score_history", []) if isinstance(existing.get("score_history"), list) else []),
-                {"score": score, "confidence": confidence, "trend": trend, "recorded_at": timestamp},
+                {"ts": timestamp, "score": score, "band": band},
             ][-50:],
             "milestones": milestones[-100:],
             "evidence": evidence,
@@ -254,12 +262,12 @@ def endpoint_founder_memory_get(payload: dict[str, Any]) -> dict[str, Any]:
             "aliases": [],
             "identity_resolution": reference,
             "founder_score": {
-                "score": 50,
-                "confidence": "low",
-                "trend": "stable",
-                "factors": [],
+                "score": 35,
+                "band": 30,
+                "trend": "flat",
+                "inputs": {"signals_total": 0, "source_diversity": 0, "signals_last_30d": 0},
                 "uncertainty": [
-                    "No persistent founder evidence yet. This is a provisional cold-start score, not a negative judgment."
+                    "No persistent founder evidence yet. This wide band is uncertainty, not a negative judgment."
                 ],
                 "updated_at": now_iso(),
             },
