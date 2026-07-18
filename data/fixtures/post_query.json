@@ -1,0 +1,22 @@
+{
+  "filter": {
+    "technical_founder": true,
+    "sectors": [
+      "AI infrastructure"
+    ],
+    "geos": [],
+    "shipped_within_days": 30,
+    "prior_vc": false
+  },
+  "results": [
+    {
+      "founder_id": "fndr_syn_001",
+      "why_matched": [
+        "Technical founder",
+        "AI infrastructure",
+        "Recent product shipment",
+        "No prior VC disclosed"
+      ]
+    }
+  ]
+}

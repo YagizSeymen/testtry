@@ -1,0 +1,17 @@
+{
+  "axes": {
+    "founder": {
+      "score": 7,
+      "trend": "up",
+      "rationale": "The synthetic evidence shows consistent technical shipping, while the evidence base remains thin."
+    },
+    "market": {
+      "rating": "bullish",
+      "rationale": "Synthetic market evidence indicates growing demand for AI infrastructure tooling."
+    },
+    "idea_vs_market": {
+      "verdict": "survives",
+      "rationale": "The product addresses a documented workflow need, subject to traction verification."
+    }
+  }
+}

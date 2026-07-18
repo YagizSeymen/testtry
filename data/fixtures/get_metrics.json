@@ -1,0 +1,9 @@
+{
+  "signal_to_decision_min": 12.0,
+  "funnel": {
+    "sourced": 1,
+    "screened": 1,
+    "diligenced": 1,
+    "decided": 1
+  }
+}

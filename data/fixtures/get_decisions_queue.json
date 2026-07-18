@@ -1,0 +1,15 @@
+[
+  {
+    "application_id": "app_syn_001",
+    "company": "NeuralKit (Synthetic)",
+    "recommendation": {
+      "invest": true,
+      "amount": 100000,
+      "rationale": "Proceed only on the supported market thesis and founder execution evidence, with the traction contradiction explicitly preserved for human review.",
+      "based_on": [
+        "clm_syn_market_001"
+      ]
+    },
+    "memo_id": "memo_syn_001"
+  }
+]

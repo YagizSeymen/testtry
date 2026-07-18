@@ -1,0 +1,47 @@
+{
+  "adversarial": {
+    "persona": "Founder-Risk Partner",
+    "objections": [
+      {
+        "text": "A fast-growing open-source alternative may compress willingness to pay in the target market.",
+        "targets": [
+          "clm_syn_market_001"
+        ],
+        "evidence": [
+          "sig_syn_competitor_001"
+        ],
+        "label": "evidence-backed",
+        "verification": "verified"
+      },
+      {
+        "text": "The revenue contradiction may indicate a broader pattern of unreliable reporting.",
+        "targets": [
+          "clm_syn_traction_001"
+        ],
+        "evidence": null,
+        "label": "speculation",
+        "verification": "n/a"
+      }
+    ]
+  },
+  "decision_brief": {
+    "summary": "Decision Brief: 1 red, 0 yellow, 1 dim contested pairs; human review required.",
+    "contested": [
+      {
+        "claim_id": "clm_syn_market_001",
+        "objection_i": 0,
+        "severity": "red"
+      },
+      {
+        "claim_id": "clm_syn_traction_001",
+        "objection_i": 1,
+        "severity": "dim"
+      }
+    ],
+    "stats": {
+      "claims": 2,
+      "contested": 2,
+      "verified_attacks": 1
+    }
+  }
+}

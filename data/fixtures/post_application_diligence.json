@@ -1,0 +1,26 @@
+{
+  "claims": [
+    {
+      "claim_id": "clm_syn_traction_001",
+      "verdict": "contradicted",
+      "trust": "low",
+      "evidence": [
+        "sig_syn_hn_001"
+      ],
+      "note": "A synthetic HN-style signal says the company was pre-revenue three weeks earlier."
+    },
+    {
+      "claim_id": "clm_syn_market_001",
+      "verdict": "supported",
+      "trust": "high",
+      "evidence": [
+        "sig_syn_market_001",
+        "sig_syn_market_002"
+      ],
+      "note": "Two resolved synthetic signals support demand from AI infrastructure teams."
+    }
+  ],
+  "gaps": [
+    "Cap table: not disclosed"
+  ]
+}

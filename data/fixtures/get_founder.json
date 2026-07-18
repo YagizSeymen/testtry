@@ -1,0 +1,69 @@
+{
+  "profile": {
+    "founder_id": "fndr_syn_001",
+    "name": "Maya Chen (Synthetic)",
+    "headline": "Technical founder building AI infrastructure",
+    "location": "San Francisco, CA",
+    "origin": "synthetic",
+    "bio": "Synthetic founder profile created for the hackathon demo."
+  },
+  "signals": [
+    {
+      "signal_id": "sig_syn_hn_001",
+      "ts": "2026-06-27T09:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic HN-style evidence: the founder said NeuralKit was pre-revenue.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_competitor_001",
+      "ts": "2026-05-30T18:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic repository signal: a comparable open-source tool is gaining adoption.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_market_002",
+      "ts": "2026-05-20T12:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic customer note: an AI infrastructure team reported the workflow as a priority.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_market_001",
+      "ts": "2026-05-10T12:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic market note: infrastructure teams are increasing spend on model observability.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_demo_001",
+      "ts": "2026-04-10T16:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic product signal: the founder published a working demo.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_hackathon_001",
+      "ts": "2026-03-01T20:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic background signal: the founder won a university hackathon.",
+      "url": null
+    }
+  ],
+  "score_history": [
+    {
+      "ts": "2026-06-01T08:00:00Z",
+      "score": 55,
+      "band": 24
+    },
+    {
+      "ts": "2026-07-18T08:00:00Z",
+      "score": 59,
+      "band": 22
+    }
+  ],
+  "applications": [
+    "app_syn_001"
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "application_id": "app_syn_001",
+  "founder_id": "fndr_syn_001",
+  "company_name": "NeuralKit (Synthetic)",
+  "status": "approved",
+  "claims": [
+    {
+      "claim_id": "clm_syn_traction_001",
+      "type": "traction",
+      "text": "NeuralKit has reached $50K in monthly recurring revenue.",
+      "source_span": "We have reached $50K in monthly recurring revenue."
+    },
+    {
+      "claim_id": "clm_syn_market_001",
+      "type": "market",
+      "text": "The company targets AI infrastructure teams.",
+      "source_span": "Our initial customers are AI infrastructure teams."
+    }
+  ],
+  "axes": {
+    "founder": {
+      "score": 7,
+      "trend": "up",
+      "rationale": "The synthetic evidence shows consistent technical shipping, while the evidence base remains thin."
+    },
+    "market": {
+      "rating": "bullish",
+      "rationale": "Synthetic market evidence indicates growing demand for AI infrastructure tooling."
+    },
+    "idea_vs_market": {
+      "verdict": "survives",
+      "rationale": "The product addresses a documented workflow need, subject to traction verification."
+    }
+  },
+  "diligence": {
+    "claims": [
+      {
+        "claim_id": "clm_syn_traction_001",
+        "verdict": "contradicted",
+        "trust": "low",
+        "evidence": [
+          "sig_syn_hn_001"
+        ],
+        "note": "A synthetic HN-style signal says the company was pre-revenue three weeks earlier."
+      },
+      {
+        "claim_id": "clm_syn_market_001",
+        "verdict": "supported",
+        "trust": "high",
+        "evidence": [
+          "sig_syn_market_001",
+          "sig_syn_market_002"
+        ],
+        "note": "Two resolved synthetic signals support demand from AI infrastructure teams."
+      }
+    ],
+    "gaps": [
+      "Cap table: not disclosed"
+    ]
+  },
+  "memo": {
+    "memo_id": "memo_syn_001",
+    "sections": {
+      "snapshot": "NeuralKit (Synthetic) is an AI infrastructure opportunity with a technically credible founder and disputed traction.",
+      "hypotheses": "The investable hypothesis is that infrastructure demand can support early design partnerships despite unverified revenue quality.",
+      "swot": "Strength: technical shipping. Weakness: contradicted revenue claim. Opportunity: expanding observability spend. Threat: open-source alternatives.",
+      "problem_product": "The product targets operational friction in model observability workflows.",
+      "traction_kpis": "The $50K MRR claim is contradicted. No verified revenue KPI is committed in this memo."
+    },
+    "recommendation": {
+      "invest": true,
+      "amount": 100000,
+      "rationale": "Proceed only on the supported market thesis and founder execution evidence, with the traction contradiction explicitly preserved for human review.",
+      "based_on": [
+        "clm_syn_market_001"
+      ]
+    }
+  },
+  "adversarial": {
+    "persona": "Founder-Risk Partner",
+    "objections": [
+      {
+        "text": "A fast-growing open-source alternative may compress willingness to pay in the target market.",
+        "targets": [
+          "clm_syn_market_001"
+        ],
+        "evidence": [
+          "sig_syn_competitor_001"
+        ],
+        "label": "evidence-backed",
+        "verification": "verified"
+      },
+      {
+        "text": "The revenue contradiction may indicate a broader pattern of unreliable reporting.",
+        "targets": [
+          "clm_syn_traction_001"
+        ],
+        "evidence": null,
+        "label": "speculation",
+        "verification": "n/a"
+      }
+    ]
+  },
+  "decision_brief": {
+    "summary": "Decision Brief: 1 red, 0 yellow, 1 dim contested pairs; human review required.",
+    "contested": [
+      {
+        "claim_id": "clm_syn_market_001",
+        "objection_i": 0,
+        "severity": "red"
+      },
+      {
+        "claim_id": "clm_syn_traction_001",
+        "objection_i": 1,
+        "severity": "dim"
+      }
+    ],
+    "stats": {
+      "claims": 2,
+      "contested": 2,
+      "verified_attacks": 1
+    }
+  },
+  "evidence": [
+    {
+      "signal_id": "sig_syn_hn_001",
+      "ts": "2026-06-27T09:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic HN-style evidence: the founder said NeuralKit was pre-revenue.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_market_001",
+      "ts": "2026-05-10T12:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic market note: infrastructure teams are increasing spend on model observability.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_market_002",
+      "ts": "2026-05-20T12:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic customer note: an AI infrastructure team reported the workflow as a priority.",
+      "url": null
+    },
+    {
+      "signal_id": "sig_syn_competitor_001",
+      "ts": "2026-05-30T18:00:00Z",
+      "source": "synthetic",
+      "text": "Synthetic repository signal: a comparable open-source tool is gaining adoption.",
+      "url": null
+    }
+  ]
+}

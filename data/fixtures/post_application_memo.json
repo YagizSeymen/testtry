@@ -1,0 +1,18 @@
+{
+  "memo_id": "memo_syn_001",
+  "sections": {
+    "snapshot": "NeuralKit (Synthetic) is an AI infrastructure opportunity with a technically credible founder and disputed traction.",
+    "hypotheses": "The investable hypothesis is that infrastructure demand can support early design partnerships despite unverified revenue quality.",
+    "swot": "Strength: technical shipping. Weakness: contradicted revenue claim. Opportunity: expanding observability spend. Threat: open-source alternatives.",
+    "problem_product": "The product targets operational friction in model observability workflows.",
+    "traction_kpis": "The $50K MRR claim is contradicted. No verified revenue KPI is committed in this memo."
+  },
+  "recommendation": {
+    "invest": true,
+    "amount": 100000,
+    "rationale": "Proceed only on the supported market thesis and founder execution evidence, with the traction contradiction explicitly preserved for human review.",
+    "based_on": [
+      "clm_syn_market_001"
+    ]
+  }
+}

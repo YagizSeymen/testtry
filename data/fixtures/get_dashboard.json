@@ -1,0 +1,15 @@
+[
+  {
+    "founder_id": "fndr_syn_001",
+    "name": "Maya Chen (Synthetic)",
+    "origin": "synthetic",
+    "founder_score": 59,
+    "band": 22,
+    "trend": "up",
+    "top_signals": [
+      "[Synthetic] Shipped an AI infrastructure demo",
+      "[Synthetic] Won a university hackathon"
+    ],
+    "has_open_app": true
+  }
+]

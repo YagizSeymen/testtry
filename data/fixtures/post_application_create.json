@@ -1,0 +1,18 @@
+{
+  "application_id": "app_syn_001",
+  "founder_id": "fndr_syn_001",
+  "claims": [
+    {
+      "claim_id": "clm_syn_traction_001",
+      "type": "traction",
+      "text": "NeuralKit has reached $50K in monthly recurring revenue.",
+      "source_span": "We have reached $50K in monthly recurring revenue."
+    },
+    {
+      "claim_id": "clm_syn_market_001",
+      "type": "market",
+      "text": "The company targets AI infrastructure teams.",
+      "source_span": "Our initial customers are AI infrastructure teams."
+    }
+  ]
+}

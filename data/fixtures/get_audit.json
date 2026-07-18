@@ -1,0 +1,30 @@
+[
+  {
+    "ts": "2026-07-18T08:00:00Z",
+    "stage": "ingest",
+    "actor": "system",
+    "action": "loaded_cached_signals",
+    "detail": "Loaded six reviewed synthetic signals for fndr_syn_001."
+  },
+  {
+    "ts": "2026-07-18T08:05:00Z",
+    "stage": "diligence",
+    "actor": "system",
+    "action": "judged_claims",
+    "detail": "Judged two claims and preserved one contradiction."
+  },
+  {
+    "ts": "2026-07-18T08:10:00Z",
+    "stage": "adversary",
+    "actor": "system",
+    "action": "built_decision_brief",
+    "detail": "Verified one evidence-backed objection and built the brief deterministically."
+  },
+  {
+    "ts": "2026-07-18T08:12:00Z",
+    "stage": "decision",
+    "actor": "Yuning",
+    "action": "approved",
+    "detail": "Human approved the synthetic $100K recommendation."
+  }
+]
