@@ -1,6 +1,6 @@
 # VentureIntelligence
 
-**An Evidence-Grounded Multi-Agent System for Cold-Start Founder Discovery and Transparent Venture Decision Support**
+**An Evidence-Grounded Bounded AI System for Cold-Start Founder Discovery and Transparent Venture Decision Support**
 
 Hack-Nation Challenge 2 — **The VC Brain: Deploying $100K Checks in 24 Hours** (Maschmeyer Group × MIT Clubs).
 
@@ -275,7 +275,7 @@ flowchart TB
 
 Objection badges from the truth-gap Judge: `verified` | `unverified` | `speculation`.
 
-### Diagram H — Target vs current repo status
+### Diagram H — Target vs current implementation status
 
 ```mermaid
 flowchart LR
@@ -287,17 +287,19 @@ flowchart LR
     FounderScore[Persistent Founder Score]
     FEBE[Frontend plus Backend]
   end
-  subgraph today [origin/yagiz today]
-    AIStages[AI stage HTTP API]
-    SevenAxis[7 screening axes]
-    InMem[Evidence in request JSON]
-    NoFE[No FE or BE yet]
+  subgraph today [yagiz AI MVP]
+    SourceMVP[Thesis sourcing plus bounded crawler]
+    ThreeAxisMVP[3-axis screening plus diagnostics]
+    TrustMVP[Per-claim trust plus Truth-Gap]
+    FounderMVP[File-backed Founder Memory]
+    Contract[Shared API contract v0.4]
+    NoFE[Frontend and durable backend pending]
   end
-  Src -.->|gap| InMem
-  ThreeAxis -.->|mismatch| SevenAxis
-  Trust -.->|partial| AIStages
-  Thesis -.->|missing| AIStages
-  FounderScore -.->|missing| InMem
+  Src --> SourceMVP
+  ThreeAxis --> ThreeAxisMVP
+  Trust --> TrustMVP
+  Thesis --> Contract
+  FounderScore --> FounderMVP
   FEBE -.->|missing| NoFE
 ```
 
@@ -332,6 +334,7 @@ Crawler guardrails:
 
 - Respect robots and rate limits.
 - Store source URLs and timestamps.
+- Preserve canonical URL, content hash, source channel, and published time when available.
 - Deduplicate identical or near-identical content.
 - Prefer primary sources.
 - Label stale or low-confidence evidence.
@@ -522,35 +525,49 @@ Other appendix sections (team & history, technology, market sizing, competition,
 | `origin/yagiz` | Existing AI service + `api-contract.json` |
 | `challenge2.pdf` | Official challenge brief |
 
-### What exists on `origin/yagiz`
+### What exists on `yagiz`
 
 ```text
-README.md              # Earlier VC Brain design (7-axis oriented)
-api-contract.json      # Shared FE/BE/AI contract
+README.md              # Product and architecture documentation
+api-contract.json      # Shared v0.4 FE/BE/AI contract
 ai_service/
-  core.py              # Deterministic stage logic
+  core.py              # Deterministic stage logic, trust and 3-axis scoring
+  crawler.py           # Bounded public-web crawler
+  sourcing.py          # Thesis planning, discovery and ranking
+  memory.py            # File-backed Founder Memory MVP
   runtime.py           # Stage wrappers
   model_router.py      # Optional OpenAI routing
-  orchestration.py     # LangGraph DAG (+ sequential fallback)
+  orchestration.py     # LangGraph diligence DAG (+ sequential fallback)
+  sourcing_orchestration.py # LangGraph sourcing DAG
   server.py            # HTTP /v1/ai/* on :8001
   tests/ examples/
 ```
 
-Implemented AI HTTP stages: `research.plan`, `evidence.extract`, `screen.score`, `memo.write`, `adversary.write`, `truth_gap.verify`, `verdict.brief`.
+Implemented AI HTTP stages include `sourcing.plan`, `research.crawl`,
+`sourcing.discover`, `sourcing.rank`, `sourcing.run`, `founders.memory.*`,
+`research.plan`, `evidence.extract`, `evidence.verify`, `screen.score`,
+`memo.write`, `adversary.write`, `truth_gap.verify`, and `verdict.brief`.
 
-### Gaps vs this target architecture
+The `0.4.0` contract now defines versioned theses, a pre-deal `SourcingJob`,
+candidate lifecycle and activation, provisional founder identity references,
+source provenance, normalized Memory claims, human decision audit records, and
+source-channel outcome feedback. Every AI endpoint has a typed request and
+response schema.
 
-| Target | Current `yagiz` |
+### Remaining gaps vs this target architecture
+
+| Target | Current state |
 |--------|-----------------|
-| Outbound sourcing (GitHub, HN, hackathons, …) | Not started |
-| Persistent Memory DB + Founder Score | Request-scoped evidence lists only |
-| Thesis Engine + NL query | Not in contract/code |
-| **3-axis** screening + trends | **7 axes** (founder, market, product, traction, business_model, fundraising, risk) |
-| Challenge memo sections (SWOT, etc.) | Simpler memo schema |
-| Per-claim Trust Score + external verify | Confidence fields + heuristic judge |
-| Frontend + Backend orchestration | Spec / contract only |
+| Thesis-driven outbound sourcing | AI MVP is implemented; direct GitHub/HN/accelerator adapters remain future enrichment work |
+| Persistent Memory DB + Founder Score | File-backed AI MVP implemented; backend must own durable multi-user storage and reviewed identity merges |
+| **3-axis** screening + trends | Implemented; supporting diagnostics remain visible but are not averaged |
+| Challenge memo sections (SWOT, etc.) | Implemented with explicit data gaps and diligence log |
+| Per-claim Trust Score + external verify | Implemented; deterministic mode has heuristic contradiction detection, while model-backed mode requires external source review |
+| Frontend + Backend orchestration | Contract ready; frontend, durable backend, jobs, activation/outreach, and human decision persistence remain to be built |
 
-**Alignment rule going forward:** implement and document against the **3-axis + Memory + sourcing** target in this README. Treat the `yagiz` 7-axis scorer as temporary scaffolding to realign.
+**Alignment rule going forward:** implement and document against the **3-axis +
+Memory + sourcing** target in this README. The remaining work is operational
+ownership and source-depth, not a redesign of the bounded decision pipeline.
 
 ### Suggested demo flow
 
@@ -580,11 +597,11 @@ Implemented AI HTTP stages: `research.plan`, `evidence.extract`, `screen.score`,
 | Challenge brief | [`challenge2.pdf`](challenge2.pdf) |
 | AI service + contract | Branch `yagiz` / `origin/yagiz` — `ai_service/`, `api-contract.json` |
 
-### Parallel work (once implementation starts)
+### Parallel work
 
 - **Frontend** — intake, progress, evidence browser, 3-axis dashboard, memo vs counter-case, decision actions.
-- **Backend** — deals, jobs, persistence, Memory, AI client, packet assembly, audit log.
-- **AI / data** — ingestion adapters, extract, Thesis Engine, 3-axis screen, memo, adversary, truth-gap; realign contract to this README.
+- **Backend** — versioned theses, sourcing jobs, candidates, durable Memory and identity merge review, activation/outreach, deals, jobs, packet assembly, human audit, source outcomes.
+- **AI / data** — bounded crawling, source adapters, extraction, Trust validation, Thesis Engine, 3-axis screen, memo, adversary, truth-gap, and model-backed web discovery.
 
 Use a shared API contract so FE, BE, and AI can develop against the same schemas.
 
