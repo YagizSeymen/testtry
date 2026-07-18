@@ -34,7 +34,16 @@ class HttpPipelineTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             return json.loads(response.read().decode("utf-8"))
 
+    def get(self, path):
+        with urlopen(self.base_url + path, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            return json.loads(response.read().decode("utf-8"))
+
     def test_all_contract_endpoints(self):
+        health = self.get("/health")
+        self.assertEqual(health["runtime_mode"], "deterministic")
+        self.assertEqual(health["model_by_stage"]["memo_write"], "gpt-5.6-terra")
+
         plan = self.post("/v1/ai/research/plan", {"deal": DEAL})
         self.assertIn("queries", plan)
 

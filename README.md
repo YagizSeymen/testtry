@@ -245,25 +245,7 @@ Goal:
 
 Write the strongest honest investment case supported by Memory.
 
-### LLM 5: Memo Quality Checker
-
-Input:
-
-- Memo.
-- Memory records.
-
-Output:
-
-- Citation coverage.
-- Unsupported claims.
-- Missing critical sections.
-- Required fixes.
-
-Goal:
-
-Keep the memo grounded before adversarial review.
-
-### LLM 6: Devil's Advocate
+### LLM 5: Devil's Advocate
 
 Input:
 
@@ -291,7 +273,7 @@ Important constraints:
 - No invented facts.
 - Every objection must be evidence-backed or explicitly marked as speculation.
 
-### LLM 7: Truth-Gap Judge On Adversarial Objections
+### LLM 6: Truth-Gap Judge On Adversarial Objections
 
 Input:
 
@@ -319,7 +301,7 @@ Truth-gap Judge rules:
 - If an objection is explicitly risk reasoning from missing or weak evidence, badge it `speculation`.
 - If an objection contradicts stronger evidence in Memory, badge it `unverified` and cite the contradictory evidence.
 
-### Optional LLM 8: Verdict Brief
+### Optional LLM 7: Verdict Brief
 
 Input:
 

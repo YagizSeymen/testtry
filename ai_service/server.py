@@ -12,20 +12,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from . import core
+from . import runtime
+from .model_router import ModelRouter, model_manifest
 
 
 HandlerFn = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 ROUTES: dict[str, HandlerFn] = {
-    "/v1/ai/research/plan": core.endpoint_research_plan,
-    "/v1/ai/evidence/extract": core.endpoint_evidence_extract,
-    "/v1/ai/screen/score": core.endpoint_screen_score,
-    "/v1/ai/memo/write": core.endpoint_memo_write,
-    "/v1/ai/adversary/write": core.endpoint_adversary_write,
-    "/v1/ai/truth-gap/verify": core.endpoint_truth_gap_verify,
-    "/v1/ai/verdict/brief": core.endpoint_verdict_brief,
+    "/v1/ai/research/plan": runtime.endpoint_research_plan,
+    "/v1/ai/evidence/extract": runtime.endpoint_evidence_extract,
+    "/v1/ai/screen/score": runtime.endpoint_screen_score,
+    "/v1/ai/memo/write": runtime.endpoint_memo_write,
+    "/v1/ai/adversary/write": runtime.endpoint_adversary_write,
+    "/v1/ai/truth-gap/verify": runtime.endpoint_truth_gap_verify,
+    "/v1/ai/verdict/brief": runtime.endpoint_verdict_brief,
 }
 
 
@@ -35,7 +36,15 @@ class AIServiceHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in {"/health", "/v1/ai/health"}:
-            self.write_json(200, {"status": "ok", "service": "vc-brain-ai"})
+            self.write_json(
+                200,
+                {
+                    "status": "ok",
+                    "service": "vc-brain-ai",
+                    "runtime_mode": ModelRouter().mode,
+                    "model_by_stage": model_manifest(),
+                },
+            )
             return
         self.write_json(404, {"error": "not_found", "path": path})
 
