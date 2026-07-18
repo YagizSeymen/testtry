@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from . import crawler, memory, runtime, sourcing, sourcing_orchestration
+from . import crawler, memory, pipeline, runtime, sourcing, sourcing_orchestration
 from .model_router import ModelRouter, model_manifest
 
 
@@ -20,6 +20,18 @@ HandlerFn = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 ROUTES: dict[str, HandlerFn] = {
+    # Contract v1 internal AI boundary. Backend owns all /api product routes
+    # and may call these fixed stages over HTTP or import ai_service.pipeline.
+    "/v1/ai/extract": pipeline.endpoint_extract,
+    "/v1/ai/query": pipeline.endpoint_query,
+    "/v1/ai/screen": pipeline.endpoint_screen,
+    "/v1/ai/diligence": pipeline.endpoint_diligence,
+    "/v1/ai/memo": pipeline.endpoint_memo,
+    "/v1/ai/adversary": pipeline.endpoint_adversary,
+    "/v1/ai/adversary/verify": pipeline.endpoint_verify_adversary,
+    "/v1/ai/application/run": pipeline.endpoint_application_run,
+    # Legacy helpers are kept during backend migration. They are not part of
+    # api-contract.json and must not be wired into the public product API.
     "/v1/ai/sourcing/plan": sourcing.endpoint_sourcing_plan,
     "/v1/ai/sourcing/discover": sourcing.endpoint_candidates_discover,
     "/v1/ai/sourcing/rank": sourcing.endpoint_candidates_rank,

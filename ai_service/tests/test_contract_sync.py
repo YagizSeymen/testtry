@@ -25,13 +25,42 @@ class ContractSyncTest(unittest.TestCase):
             for endpoint in contract["ai_service_api"]["endpoints"]
         }
         self.assertTrue(documented <= set(ROUTES))
-        self.assertEqual(contract["contract_version"], "0.4.0")
+        self.assertEqual(contract["contract_version"], "1.0.0")
         self.assertTrue(
             all(endpoint.get("request_schema") for endpoint in contract["ai_service_api"]["endpoints"])
         )
         self.assertTrue(
             all(endpoint.get("response_schema") for endpoint in contract["ai_service_api"]["endpoints"])
         )
+
+    def test_product_routes_match_steps_build_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        contract = json.loads((root / "api-contract.json").read_text(encoding="utf-8"))
+        documented = {
+            f"{endpoint['method']} {contract['product_api']['base_path']}{endpoint['path']}"
+            for endpoint in contract["product_api"]["endpoints"]
+        }
+        expected = {
+            "POST /api/thesis",
+            "GET /api/thesis",
+            "POST /api/scan/run",
+            "GET /api/dashboard",
+            "POST /api/query",
+            "GET /api/founders/{id}",
+            "POST /api/founders/{id}/activate",
+            "POST /api/applications",
+            "GET /api/applications/{id}",
+            "POST /api/applications/{id}/screen",
+            "POST /api/applications/{id}/diligence",
+            "POST /api/applications/{id}/memo",
+            "POST /api/applications/{id}/adversary",
+            "GET /api/decisions/queue",
+            "POST /api/decisions/{id}/decide",
+            "GET /api/audit?founder_id=",
+            "GET /api/metrics",
+        }
+        self.assertEqual(documented, expected)
+        self.assertEqual(contract["product_api"]["owner"], "backend")
 
     def test_internal_schema_references_resolve(self):
         root = Path(__file__).resolve().parents[2]
