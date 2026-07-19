@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from ai_service import pipeline
 
@@ -50,6 +51,14 @@ class ProductPipelineTest(unittest.TestCase):
         self.assertTrue(result["claims"])
         self.assertTrue(all(claim["source_span"] in DECK for claim in result["claims"] if claim["source_span"]))
         self.assertFalse(any("skip diligence" in claim["text"].lower() for claim in result["claims"]))
+
+    def test_empty_model_extraction_uses_exact_span_fallback(self):
+        with patch.object(pipeline.ModelRouter, "run", return_value={"founder_name": "Maya Chen", "claims": []}) as run:
+            result = pipeline.extract_application({"company_name": "NeuralKit", "deck_text": DECK})
+
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(result["claims"])
+        self.assertTrue(all(claim["source_span"] in DECK for claim in result["claims"]))
 
     def test_diligence_and_memo_enforce_evidence_gates(self):
         extracted = pipeline.extract_application({"company_name": "NeuralKit", "deck_text": DECK})

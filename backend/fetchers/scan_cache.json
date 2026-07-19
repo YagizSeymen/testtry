@@ -1,0 +1,44 @@
+{
+  "generated_at": "2026-07-18T08:00:00Z",
+  "cached": true,
+  "founders": [
+    {
+      "name": "Maya Chen",
+      "headline": "Technical founder building NeuralKit for model observability",
+      "location": "Berlin, Germany",
+      "origin": "synthetic",
+      "bio": "Synthetic cache profile for the deterministic demo. Her public footprint is intentionally thin.",
+      "signals": [
+        {"signal_id": "sig_maya_hn_001", "ts": "2026-06-27T09:00:00Z", "source": "synthetic", "text": "Synthetic HN-style evidence: Maya said NeuralKit was pre-revenue three weeks ago.", "url": null},
+        {"signal_id": "sig_maya_market_001", "ts": "2026-05-10T12:00:00Z", "source": "synthetic", "text": "Synthetic market note: AI infrastructure teams are increasing spend on model observability.", "url": null},
+        {"signal_id": "sig_maya_market_002", "ts": "2026-05-20T12:00:00Z", "source": "synthetic", "text": "Synthetic customer note: an AI infrastructure team reported this workflow as a priority.", "url": null},
+        {"signal_id": "sig_maya_demo_001", "ts": "2026-04-10T16:00:00Z", "source": "synthetic", "text": "Synthetic product signal: Maya published a working model-observability demo.", "url": null},
+        {"signal_id": "sig_maya_hackathon_001", "ts": "2026-03-01T20:00:00Z", "source": "synthetic", "text": "Synthetic background signal: Maya won a university AI systems hackathon.", "url": null},
+        {"signal_id": "sig_maya_competitor_001", "ts": "2026-02-18T15:00:00Z", "source": "synthetic", "text": "Synthetic repository signal: a comparable open-source observability tool is gaining adoption.", "url": null}
+      ]
+    },
+    {
+      "name": "Iris Laurent",
+      "headline": "Compiler engineer building inference infrastructure",
+      "location": "Paris, France",
+      "origin": "github",
+      "bio": "Cache-backed profile with public implementation and shipping signals.",
+      "signals": [
+        {"signal_id": "sig_iris_repo_001", "ts": "2026-07-14T10:00:00Z", "source": "github", "text": "Iris released a GPU inference scheduling repository with reproducible benchmarks.", "url": "https://github.com/example/iris-inference"},
+        {"signal_id": "sig_iris_launch_001", "ts": "2026-07-03T11:00:00Z", "source": "hn", "text": "A launch post describes a paid pilot with an AI infrastructure team in Europe.", "url": "https://news.ycombinator.com/item?id=1"},
+        {"signal_id": "sig_iris_paper_001", "ts": "2026-06-03T09:00:00Z", "source": "paper", "text": "Iris co-authored a systems paper on model serving throughput.", "url": "https://arxiv.org/abs/2601.00001"}
+      ]
+    },
+    {
+      "name": "Noah Petrov",
+      "headline": "Developer tools founder exploring AI evaluation workflows",
+      "location": "Sofia, Bulgaria",
+      "origin": "hn",
+      "bio": "Early public footprint. The wide score band is visible rather than treated as a negative.",
+      "signals": [
+        {"signal_id": "sig_noah_launch_001", "ts": "2026-07-12T14:00:00Z", "source": "hn", "text": "Noah shipped a small evaluation workflow demo for engineering teams.", "url": "https://news.ycombinator.com/item?id=2"},
+        {"signal_id": "sig_noah_profile_001", "ts": "2026-06-28T09:00:00Z", "source": "github", "text": "Noah maintains a public developer tooling repository.", "url": "https://github.com/example/noah-evals"}
+      ]
+    }
+  ]
+}

@@ -7,10 +7,12 @@ judge + badges + verified adversary | Utility 30% = memo + gate + stopwatch |
 UX 15% = 4 clean screens + a 30-second Decision Brief.
 
 ## 1. GOLDEN PATH
-1. Dashboard: founders loaded from the reviewed scan cache, origin-tagged,
+1. Dashboard: founders loaded from Memory, origin-tagged,
    Founder Score +/- band, momentum arrow
-2. Query bar: "technical founder, AI infra, shipped last 30 days, no prior VC"
-   -> filtered list + why-matched chips
+2. Live scan: thesis-driven OpenAI web search -> bounded cited-source crawl ->
+   evidence-gated Memory ingestion; it automatically falls back to reviewed cache
+   on provider or network failure. Query bar: "technical founder, AI infra,
+   shipped last 30 days, no prior VC" -> filtered list + why-matched chips
 3. Founder page -> evidence timeline -> [Activate] -> outreach draft (never sent)
 4. Upload NeuralKit deck -> claims appear with quoted source spans
 5. Screen: Founder axis 7/10, trend improving | Market bullish |
@@ -31,8 +33,8 @@ IN (P0): dashboard + query, founder profile, application flow (claims -> axes
 -> diligence -> memo), decision queue + audit, reviewed scan cache + seeded
 fallback, 4 seeded decks, Founder Score with uncertainty band, thesis config
 (presets + small settings form)
-BONUS after P0 is stable: live GitHub + HN scan that automatically falls back
-to the reviewed cache. The demo never depends on the network.
+Live sourcing: thesis-driven web search plus bounded cited-source crawling,
+with a reviewed cache fallback. The demo remains usable without the network.
 IN (P1 overnight ladder): adversary endpoint, one batched verify call,
 Decision Brief
 IN (P2): red-team deck #5 (seeded prompt injection)
@@ -68,7 +70,7 @@ QueryFilter = {technical_founder: bool | null, sectors: [str], geos: [str],
 Thesis = {sectors: [str], stage, geo: [str], check_size: 100000,
           risk_appetite: "low" | "medium" | "high"}
 Profile = {founder_id, name, headline: str | null, location: str | null,
-           origin: "github" | "hn" | "inbound" | "synthetic",
+           origin: "github" | "hn" | "web" | "inbound" | "synthetic",
            bio: str | null}
 Axes = {
   founder: {score: number, trend: "up" | "flat" | "down", rationale},
@@ -107,7 +109,7 @@ POST /api/scan/run
 
 GET  /api/dashboard
   -> [{founder_id, name,
-       origin: "github" | "hn" | "inbound" | "synthetic",
+       origin: "github" | "hn" | "web" | "inbound" | "synthetic",
        founder_score, band, trend: "up" | "flat" | "down",
        top_signals: [str],
        has_open_app: bool}]
@@ -189,7 +191,8 @@ Adversary endpoint invariants:
   adversary to speak again.
 
 ## 4. PIPELINE (boxes left to right)
-SOURCES (reviewed cache, synthetic web, deck upload; GitHub/HN live is bonus)
+SOURCES (reviewed cache, cited public-web crawl, deck upload; direct GitHub/HN
+APIs are out of scope)
  -> INGEST/NORMALIZE  deterministic founder identity is person-based.
     normalized(name) = lowercase(name), then remove every space and punctuation
     character. Two records are the same founder if and only if their normalized
@@ -326,6 +329,7 @@ Yuning: `/prompts`, `/data`, `/eval`, and docs; prompts v1, seeds, fixtures,
 1. Freeze this contract and load canonical fixtures in the frontend.
 2. Complete the cached, seeded vertical slice through human decision + audit.
 3. Verify the clean, contradiction, and cold-start golden paths.
-4. Add the live scan button only after cache fallback is proven.
+4. Keep the live scan bounded and retain reviewed-cache fallback on provider or
+   network failure.
 5. Add adversary -> batched verify -> deterministic brief as P1.
 6. Add the prompt-injection deck only after the rest of the demo is stable.

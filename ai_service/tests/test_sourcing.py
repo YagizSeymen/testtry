@@ -22,6 +22,40 @@ Aster has signed five enterprise design partners and is running paid customer pi
 
 
 class SourcingPipelineTest(unittest.TestCase):
+    def test_web_search_sources_and_inline_citations_are_retained(self):
+        response = {
+            "output": [
+                {
+                    "action": {
+                        "sources": [
+                            {"url": "https://example.com/tool-source"},
+                        ]
+                    }
+                },
+                {
+                    "content": [
+                        {
+                            "annotations": [
+                                {"url_citation": {"url": "https://example.com/inline-citation"}},
+                            ]
+                        }
+                    ]
+                },
+            ]
+        }
+
+        self.assertEqual(
+            sourcing._response_citation_urls(response),
+            {"https://example.com/tool-source", "https://example.com/inline-citation"},
+        )
+
+    def test_page_chrome_is_not_treated_as_product_traction(self):
+        self.assertFalse(sourcing._is_substantive_source_sentence("Search code, repositories, users, issues, pull requests..."))
+        self.assertNotIn("product_traction", sourcing._signals_for_sentence("Search code, repositories, users, issues, pull requests..."))
+        self.assertNotIn("product_traction", sourcing._signals_for_sentence("Monitor VRAM usage after each model load."))
+        self.assertNotIn("europe_location", sourcing._signals_for_sentence("Deploy models on European infrastructure."))
+        self.assertIn("product_traction", sourcing._signals_for_sentence("The team has signed paid customer pilots and reports recurring revenue."))
+
     def test_thesis_to_source_backed_ranked_candidate(self):
         payload = {
             "thesis": "Find technical founders in Europe working on AI infrastructure with execution signals, no prior VC funding, and traction.",

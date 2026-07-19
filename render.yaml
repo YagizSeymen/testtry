@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: firstcheck-vc-brain
+    runtime: docker
+    healthCheckPath: /api/metrics
+    disk:
+      name: firstcheck-data
+      mountPath: /data
+      sizeGB: 1
