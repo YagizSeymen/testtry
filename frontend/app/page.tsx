@@ -16,9 +16,11 @@ import {
   ExternalLink,
   FileText,
   Flame,
+  History,
   LayoutDashboard,
   LoaderCircle,
   Mail,
+  MessageSquarePlus,
   PanelRightOpen,
   Plus,
   RefreshCw,
@@ -27,6 +29,7 @@ import {
   ShieldAlert,
   Sparkles,
   Target,
+  Trash2,
   UserRound,
   X
 } from "lucide-react";
@@ -76,9 +79,43 @@ type Thesis = { sectors: string[]; stage: string; geo: string[]; check_size: num
 type Metrics = { signal_to_decision_min: number | null; funnel: { sourced: number; screened: number; diligenced: number; decided: number } };
 type LatencySample = { label: string; ms: number; ok: boolean };
 type ScanRun = { new_founders: number; new_signals: number; candidates_found: number; candidates_reviewed: number; cached: boolean };
-type ChatCitation = { chunk_id: string; citation: number; founder_id: string; founder_name: string; source_type: string; label: string; url: string | null; snippet: string };
+type ChatCitation = { chunk_id: string; citation: number; founder_id: string; founder_name: string; source_type: string; label: string; url: string | null; snippet?: string };
 type ChatResponse = { answer: string; insufficient_evidence: boolean; citations: ChatCitation[]; retrieval: { searched_chunks: number; returned_chunks: number } };
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; citations?: ChatCitation[]; insufficient?: boolean };
+type ChatSession = { id: string; title: string; founderId: string; messages: ChatMessage[]; createdAt: string; updatedAt: string };
+
+const CHAT_STORAGE_KEY = "firstcheck.founder-memory-chats.v1";
+const ACTIVE_CHAT_STORAGE_KEY = "firstcheck.founder-memory-active-chat.v1";
+const MAX_CHAT_SESSIONS = 12;
+const MAX_STORED_MESSAGES = 30;
+
+function createChatSession(founderId = ""): ChatSession {
+  const now = new Date().toISOString();
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return { id, title: "New founder analysis", founderId, messages: [], createdAt: now, updatedAt: now };
+}
+
+function restoredChatSessions(value: string | null): ChatSession[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((session): session is ChatSession => (
+      session && typeof session.id === "string" && typeof session.title === "string" &&
+      typeof session.founderId === "string" && Array.isArray(session.messages) &&
+      typeof session.createdAt === "string" && typeof session.updatedAt === "string"
+    )).slice(0, MAX_CHAT_SESSIONS).map((session) => ({
+      ...session,
+      messages: session.messages.filter((message) => (
+        message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string"
+      )).slice(-MAX_STORED_MESSAGES)
+    }));
+  } catch {
+    return [];
+  }
+}
 
 const DEMO_DECK = `Founder: Maya Chen
 NeuralKit has reached $50K in monthly recurring revenue.
@@ -185,13 +222,15 @@ export default function ProductPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [latencies, setLatencies] = useState<LatencySample[]>([]);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState("");
+  const [chatHistoryReady, setChatHistoryReady] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatFounderId, setChatFounderId] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
+  const [chatBusyId, setChatBusyId] = useState<string | null>(null);
   const founderRequestId = useRef(0);
 
   const displayedFounders = useMemo(() => searchIds ? founders.filter((founder) => searchIds.includes(founder.founder_id)) : founders, [founders, searchIds]);
+  const activeChat = useMemo(() => chatSessions.find((session) => session.id === activeChatId) || chatSessions[0] || null, [chatSessions, activeChatId]);
 
   async function timedApi<T>(label: string, path: string, options?: RequestInit): Promise<T> {
     const startedAt = performance.now();
@@ -222,6 +261,54 @@ export default function ProductPage() {
   };
 
   useEffect(() => { void refresh().catch((cause) => setError(cause.message)); }, []);
+
+  useEffect(() => {
+    const restored = restoredChatSessions(window.localStorage.getItem(CHAT_STORAGE_KEY));
+    const sessions = restored.length ? restored : [createChatSession()];
+    const storedActiveId = window.localStorage.getItem(ACTIVE_CHAT_STORAGE_KEY);
+    setChatSessions(sessions);
+    setActiveChatId(sessions.some((session) => session.id === storedActiveId) ? storedActiveId! : sessions[0].id);
+    setChatHistoryReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!chatHistoryReady) return;
+    try {
+      window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatSessions.slice(0, MAX_CHAT_SESSIONS)));
+      if (activeChatId) window.localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, activeChatId);
+    } catch {
+      // Private browsing or a full storage quota must not break live chat.
+    }
+  }, [chatSessions, activeChatId, chatHistoryReady]);
+
+  function updateChatSession(chatId: string, update: (session: ChatSession) => ChatSession) {
+    setChatSessions((previous) => previous.map((session) => session.id === chatId ? update(session) : session));
+  }
+
+  function createNewChat() {
+    const session = createChatSession();
+    setChatSessions((previous) => [session, ...previous].slice(0, MAX_CHAT_SESSIONS));
+    setActiveChatId(session.id);
+    setChatInput("");
+  }
+
+  function selectChat(chatId: string) {
+    setActiveChatId(chatId);
+    setChatInput("");
+  }
+
+  function deleteChat(chatId: string) {
+    if (chatBusyId === chatId) return;
+    const remaining = chatSessions.filter((session) => session.id !== chatId);
+    const next = remaining.length ? remaining : [createChatSession()];
+    setChatSessions(next);
+    if (activeChatId === chatId) setActiveChatId(next[0].id);
+  }
+
+  function setActiveChatFounder(founderId: string) {
+    if (!activeChat) return;
+    updateChatSession(activeChat.id, (session) => ({ ...session, founderId, updatedAt: new Date().toISOString() }));
+  }
 
   async function chooseFounder(founder: Founder, goToProfile = true) {
     const requestId = ++founderRequestId.current;
@@ -268,29 +355,40 @@ export default function ProductPage() {
   async function askFounderMemory(event: FormEvent) {
     event.preventDefault();
     const question = chatInput.trim();
-    if (!question || chatBusy) return;
+    if (!question || chatBusyId || !activeChat) return;
+    const chatId = activeChat.id;
     const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: "user", content: question };
-    const priorHistory = chatMessages.slice(-8).map(({ role, content }) => ({ role, content }));
-    setChatMessages((previous) => [...previous, userMessage]);
+    const priorHistory = activeChat.messages.slice(-8).map(({ role, content }) => ({ role, content }));
+    updateChatSession(chatId, (session) => ({
+      ...session,
+      title: session.messages.length ? session.title : question.slice(0, 52),
+      messages: [...session.messages, userMessage].slice(-MAX_STORED_MESSAGES),
+      updatedAt: new Date().toISOString()
+    }));
     setChatInput("");
-    setChatBusy(true);
+    setChatBusyId(chatId);
     setError(null);
     try {
       const response = await timedApi<ChatResponse>("Founder Memory RAG", "/chat", {
         method: "POST",
-        body: JSON.stringify({ message: question, founder_id: chatFounderId || null, history: priorHistory })
+        body: JSON.stringify({ message: question, chat_id: chatId, founder_id: activeChat.founderId || null, history: priorHistory })
       });
-      setChatMessages((previous) => [...previous, {
+      const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
         content: response.answer,
-        citations: response.citations,
+        citations: response.citations.map(({ chunk_id, citation, founder_id, founder_name, source_type, label, url }) => ({ chunk_id, citation, founder_id, founder_name, source_type, label, url })),
         insufficient: response.insufficient_evidence
-      }]);
+      };
+      updateChatSession(chatId, (session) => ({
+        ...session,
+        messages: [...session.messages, assistantMessage].slice(-MAX_STORED_MESSAGES),
+        updatedAt: new Date().toISOString()
+      }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Founder Memory chat failed.");
     } finally {
-      setChatBusy(false);
+      setChatBusyId(null);
     }
   }
 
@@ -383,7 +481,7 @@ export default function ProductPage() {
 
         {error && <div className="error-banner"><AlertTriangle size={17} /><span>{error}</span><button className="icon-button compact" title="Dismiss error" onClick={() => setError(null)}><X size={16} /></button></div>}
 
-        {view === "dashboard" && <DashboardView founders={displayedFounders} chatFounders={founders} metrics={metrics} search={search} setSearch={setSearch} searchChips={searchChips} isSearching={busy === "search"} onSearch={runSearch} onClear={() => { setSearch(""); setSearchIds(null); setSearchChips([]); }} onSelect={(founder) => void chooseFounder(founder)} thesis={thesis} onEditThesis={() => setShowThesis(true)} latencies={latencies} scanRun={scanRun} chatMessages={chatMessages} chatInput={chatInput} setChatInput={setChatInput} chatFounderId={chatFounderId} setChatFounderId={setChatFounderId} chatBusy={chatBusy} onChat={askFounderMemory} />}
+        {view === "dashboard" && <DashboardView founders={displayedFounders} chatFounders={founders} metrics={metrics} search={search} setSearch={setSearch} searchChips={searchChips} isSearching={busy === "search"} onSearch={runSearch} onClear={() => { setSearch(""); setSearchIds(null); setSearchChips([]); }} onSelect={(founder) => void chooseFounder(founder)} thesis={thesis} onEditThesis={() => setShowThesis(true)} latencies={latencies} scanRun={scanRun} chatSessions={chatSessions} activeChat={activeChat} activeChatId={activeChatId} onSelectChat={selectChat} onNewChat={createNewChat} onDeleteChat={deleteChat} chatInput={chatInput} setChatInput={setChatInput} setChatFounderId={setActiveChatFounder} chatRequestBusy={chatBusyId !== null} activeChatBusy={chatBusyId === activeChat?.id} onChat={askFounderMemory} />}
         {view === "founder" && <FounderView founder={selectedFounder} profile={profile} outreach={outreach} busy={busy} onActivate={() => void activateFounder()} onOpenApplication={(id) => { void api<Application>(`/applications/${id}`).then((result) => { setApplication(result); setView("application"); }); }} />}
         {view === "application" && <ApplicationView application={application} nextStage={appNextStage} busy={busy} onRun={(stage) => void runStage(stage)} onDecide={(action) => void decide(action)} onNew={() => setShowSubmission(true)} latencies={latencies} />}
         {view === "decisions" && <DecisionView queue={queue} application={application} onOpen={(id) => { void api<Application>(`/applications/${id}`).then((result) => { setApplication(result); setView("application"); }); }} />}
@@ -410,7 +508,9 @@ export default function ProductPage() {
   );
 }
 
-function DashboardView({ founders, chatFounders, metrics, search, setSearch, searchChips, isSearching, onSearch, onClear, onSelect, thesis, onEditThesis, latencies, scanRun, chatMessages, chatInput, setChatInput, chatFounderId, setChatFounderId, chatBusy, onChat }: { founders: Founder[]; chatFounders: Founder[]; metrics: Metrics | null; search: string; setSearch: (value: string) => void; searchChips: string[]; isSearching: boolean; onSearch: (event: FormEvent) => void; onClear: () => void; onSelect: (founder: Founder) => void; thesis: Thesis | null; onEditThesis: () => void; latencies: LatencySample[]; scanRun: ScanRun | null; chatMessages: ChatMessage[]; chatInput: string; setChatInput: (value: string) => void; chatFounderId: string; setChatFounderId: (value: string) => void; chatBusy: boolean; onChat: (event: FormEvent) => void }) {
+function DashboardView({ founders, chatFounders, metrics, search, setSearch, searchChips, isSearching, onSearch, onClear, onSelect, thesis, onEditThesis, latencies, scanRun, chatSessions, activeChat, activeChatId, onSelectChat, onNewChat, onDeleteChat, chatInput, setChatInput, setChatFounderId, chatRequestBusy, activeChatBusy, onChat }: { founders: Founder[]; chatFounders: Founder[]; metrics: Metrics | null; search: string; setSearch: (value: string) => void; searchChips: string[]; isSearching: boolean; onSearch: (event: FormEvent) => void; onClear: () => void; onSelect: (founder: Founder) => void; thesis: Thesis | null; onEditThesis: () => void; latencies: LatencySample[]; scanRun: ScanRun | null; chatSessions: ChatSession[]; activeChat: ChatSession | null; activeChatId: string; onSelectChat: (chatId: string) => void; onNewChat: () => void; onDeleteChat: (chatId: string) => void; chatInput: string; setChatInput: (value: string) => void; setChatFounderId: (founderId: string) => void; chatRequestBusy: boolean; activeChatBusy: boolean; onChat: (event: FormEvent) => void }) {
+  const chatMessages = activeChat?.messages || [];
+  const chatFounderId = activeChat?.founderId || "";
   return <div className="view-grid dashboard-grid">
     <section className="main-column">
       <div className="metric-strip">
@@ -441,22 +541,37 @@ function DashboardView({ founders, chatFounders, metrics, search, setSearch, sea
       <section className="signal-map"><div className="surface-head"><div><p className="eyebrow">Evidence posture</p><h2>Signal diversity</h2></div><Sparkles size={18} /></div><div className="radar"><span className="radar-frame frame-one" /><span className="radar-frame frame-two" /><span className="radar-axis axis-x" /><span className="radar-axis axis-y" /><span className="radar-core"><b>03</b><em>MEM</em></span><i className="node n1">GH</i><i className="node n2">HN</i><i className="node n3">GH</i><i className="node n4">W</i><i className="node n5">S</i></div><div className="legend"><span><i className="dot github" />GitHub</span><span><i className="dot hn" />HN</span><span><i className="dot web" />Public web</span></div></section>
     </aside>
     <section className="founder-chat">
-      <div className="chat-head">
-        <div className="chat-title"><span className="chat-icon"><Bot size={19} /></span><div><p className="eyebrow">GPT-5.6 Luna · vector retrieval</p><h2>Founder Memory Copilot</h2><span>Ask across reviewed memos and evidence without leaving the dashboard.</span></div></div>
-        <label className="chat-scope">Memory scope<select value={chatFounderId} onChange={(event) => setChatFounderId(event.target.value)}><option value="">All Founder Memory</option>{chatFounders.map((founder) => <option key={founder.founder_id} value={founder.founder_id}>{founder.name}</option>)}</select></label>
+      <div className="chat-layout">
+        <aside className="chat-history-panel">
+          <div className="chat-history-head"><span><History size={14} />Chats</span><button title="New chat" onClick={onNewChat}><MessageSquarePlus size={15} /></button></div>
+          <div className="chat-history-list">{chatSessions.map((session) => {
+            const founder = chatFounders.find((item) => item.founder_id === session.founderId);
+            return <div className={session.id === activeChatId ? "chat-history-row active" : "chat-history-row"} key={session.id}>
+              <button className="chat-history-select" onClick={() => onSelectChat(session.id)}><strong>{session.title}</strong><span>{founder?.name || "All founders"} · {session.messages.length} messages</span></button>
+              <button className="chat-history-delete" title="Delete chat" onClick={() => onDeleteChat(session.id)} disabled={chatRequestBusy}><Trash2 size={13} /></button>
+            </div>;
+          })}</div>
+          <p><Database size={11} />Saved in this browser</p>
+        </aside>
+        <div className="chat-workspace">
+          <div className="chat-head">
+            <div className="chat-title"><span className="chat-icon"><Bot size={19} /></span><div><p className="eyebrow">GPT-5.6 Luna · vector retrieval</p><h2>Founder Memory Copilot</h2><span>Ask across reviewed memos and evidence without leaving the dashboard.</span></div></div>
+            <label className="chat-scope">Memory scope<select value={chatFounderId} onChange={(event) => setChatFounderId(event.target.value)} disabled={!activeChat || chatRequestBusy}><option value="">All Founder Memory</option>{chatFounders.map((founder) => <option key={founder.founder_id} value={founder.founder_id}>{founder.name}</option>)}</select></label>
+          </div>
+          <div className="chat-body" aria-live="polite">
+            {chatMessages.length === 0 && <div className="chat-empty"><Sparkles size={22} /><strong>Grounded founder analysis</strong><p>Compare evidence, inspect memo conclusions, or ask what remains unverified.</p><div className="chat-prompts"><button onClick={() => setChatInput("Which founders have the strongest public technical evidence?")}>Strongest technical evidence</button><button onClick={() => setChatInput("What claims remain unverified and why?")}>Unverified claims</button><button onClick={() => setChatInput("Compare the most important investment risks across founders.")}>Compare risks</button></div></div>}
+            {chatMessages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}>
+              <div className="chat-message-label">{message.role === "user" ? "You" : <><Bot size={13} />Luna</>}</div>
+              <p>{message.content}</p>
+              {message.insufficient && <span className="chat-warning"><AlertTriangle size={13} />Evidence is insufficient for a complete answer</span>}
+              {message.citations && message.citations.length > 0 && <div className="chat-citations">{message.citations.map((citation) => citation.url ? <a key={citation.chunk_id} href={citation.url} target="_blank" rel="noreferrer"><b>[{citation.citation}] {citation.founder_name}</b><span>{citation.label}</span><ExternalLink size={12} /></a> : <span key={citation.chunk_id}><b>[{citation.citation}] {citation.founder_name}</b><em>{citation.label}</em></span>)}</div>}
+            </article>)}
+            {activeChatBusy && <div className="chat-thinking"><LoaderCircle className="spin" size={16} />Retrieving Founder Memory and grounding Luna…</div>}
+          </div>
+          <form className="chat-compose" onSubmit={onChat}><textarea rows={2} maxLength={4000} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about a founder, company, claim, memo, evidence gap, or investment risk…" disabled={!activeChat || chatRequestBusy} /><button className="command-button" type="submit" disabled={chatRequestBusy || !chatInput.trim() || !activeChat}>{chatRequestBusy ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}Ask Memory</button></form>
+          <div className="chat-foot"><Database size={12} />Grounded only in stored Founder Memory. Citations open the retained source when available; this is not an investment decision.</div>
+        </div>
       </div>
-      <div className="chat-body" aria-live="polite">
-        {chatMessages.length === 0 && <div className="chat-empty"><Sparkles size={22} /><strong>Grounded founder analysis</strong><p>Compare evidence, inspect memo conclusions, or ask what remains unverified.</p><div className="chat-prompts"><button onClick={() => setChatInput("Which founders have the strongest public technical evidence?")}>Strongest technical evidence</button><button onClick={() => setChatInput("What claims remain unverified and why?")}>Unverified claims</button><button onClick={() => setChatInput("Compare the most important investment risks across founders.")}>Compare risks</button></div></div>}
-        {chatMessages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}>
-          <div className="chat-message-label">{message.role === "user" ? "You" : <><Bot size={13} />Luna</>}</div>
-          <p>{message.content}</p>
-          {message.insufficient && <span className="chat-warning"><AlertTriangle size={13} />Evidence is insufficient for a complete answer</span>}
-          {message.citations && message.citations.length > 0 && <div className="chat-citations">{message.citations.map((citation) => citation.url ? <a key={citation.chunk_id} href={citation.url} target="_blank" rel="noreferrer"><b>[{citation.citation}] {citation.founder_name}</b><span>{citation.label}</span><ExternalLink size={12} /></a> : <span key={citation.chunk_id}><b>[{citation.citation}] {citation.founder_name}</b><em>{citation.label}</em></span>)}</div>}
-        </article>)}
-        {chatBusy && <div className="chat-thinking"><LoaderCircle className="spin" size={16} />Retrieving Founder Memory and grounding Luna…</div>}
-      </div>
-      <form className="chat-compose" onSubmit={onChat}><textarea rows={2} maxLength={4000} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about a founder, company, claim, memo, evidence gap, or investment risk…" /><button className="command-button" type="submit" disabled={chatBusy || !chatInput.trim()}>{chatBusy ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}Ask Memory</button></form>
-      <div className="chat-foot"><Database size={12} />Grounded only in stored Founder Memory. Citations open the retained source when available; this is not an investment decision.</div>
     </section>
   </div>;
 }

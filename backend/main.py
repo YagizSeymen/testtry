@@ -34,8 +34,8 @@ try:  # Package import locally; direct module import in the Vercel service.
 except ImportError:  # pragma: no cover - exercised by Vercel's entrypoint loader
     from llm.wrapper import LLMWrapper
 
-from ai_service import pipeline as product_pipeline
-from ai_service import sourcing_orchestration
+from ai_service import pipeline as product_pipeline  # noqa: E402 - import follows Vercel path bootstrap
+from ai_service import sourcing_orchestration  # noqa: E402 - import follows Vercel path bootstrap
 
 
 load_dotenv(ROOT / ".env")
@@ -249,6 +249,9 @@ class PostgresConnection:
     def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
         return self.raw.execute(postgres_sql(statement), parameters)
 
+    def executemany(self, statement: str, parameters: list[tuple[Any, ...]]) -> Any:
+        return self.raw.executemany(postgres_sql(statement), parameters)
+
     def commit(self) -> None:
         self.raw.commit()
 
@@ -387,6 +390,7 @@ class Store:
                       updated_at TEXT NOT NULL
                     )
                     """,
+                    "CREATE INDEX IF NOT EXISTS idx_rag_chunks_founder_id ON rag_chunks(founder_id)",
                 ):
                     db.execute(statement)
             else:
@@ -472,6 +476,7 @@ class Store:
                       updated_at TEXT NOT NULL,
                       FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
                     );
+                    CREATE INDEX IF NOT EXISTS idx_rag_chunks_founder_id ON rag_chunks(founder_id);
                     """
                 )
             existing = db.execute("SELECT payload FROM thesis WHERE singleton = 1").fetchone()
@@ -1029,12 +1034,20 @@ class Store:
                 existing = {
                     str(row["chunk_id"]): row
                     for row in db.execute(
-                        "SELECT chunk_id, content_hash, embedding_json FROM rag_chunks WHERE founder_id = ?",
+                        """SELECT chunk_id, founder_name, source_type, source_id, label, url,
+                                  content_hash, embedding_json
+                           FROM rag_chunks WHERE founder_id = ?""",
                         (current_founder_id,),
                     ).fetchall()
                 }
                 for chunk in chunks:
                     previous = existing.get(str(chunk["chunk_id"]))
+                    unchanged = previous is not None and all(
+                        previous[field] == chunk[field]
+                        for field in ("founder_name", "source_type", "source_id", "label", "url", "content_hash")
+                    )
+                    if unchanged:
+                        continue
                     embedding_json = (
                         previous["embedding_json"]
                         if previous is not None and previous["content_hash"] == chunk["content_hash"]
@@ -1079,11 +1092,11 @@ class Store:
         if not updates:
             return
         with self.connection() as db:
-            for chunk_id, embedding in updates.items():
-                db.execute(
-                    "UPDATE rag_chunks SET embedding_json = ?, updated_at = ? WHERE chunk_id = ?",
-                    (dumps(embedding), now_iso(), chunk_id),
-                )
+            updated_at = now_iso()
+            db.executemany(
+                "UPDATE rag_chunks SET embedding_json = ?, updated_at = ? WHERE chunk_id = ?",
+                [(dumps(embedding), updated_at, chunk_id) for chunk_id, embedding in updates.items()],
+            )
 
     def resolve_or_create_founder(self, name: str) -> str:
         key = normalized_name(name)
@@ -1696,6 +1709,11 @@ def founder_memory_chat(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(422, "message is required.")
     if len(message) > 4000:
         raise HTTPException(422, "message must be 4000 characters or fewer.")
+    chat_id = payload.get("chat_id")
+    if chat_id is None:
+        chat_id = "legacy-chat"
+    elif not isinstance(chat_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", chat_id):
+        raise HTTPException(422, "chat_id must contain 8-80 letters, numbers, underscores, or hyphens.")
     founder_id = payload.get("founder_id")
     if founder_id is not None and (not isinstance(founder_id, str) or not founder_id.strip()):
         raise HTTPException(422, "founder_id must be a non-empty string or null.")
@@ -1719,7 +1737,7 @@ def founder_memory_chat(payload: dict[str, Any]) -> dict[str, Any]:
             "retrieval": {"searched_chunks": 0, "returned_chunks": 0},
         }
     try:
-        result = llm.founder_chat(message.strip(), history, chunks)
+        result = llm.founder_chat(message.strip(), history, chunks, chat_id)
     except Exception as exc:
         logger.warning("Founder Memory chat failed: %s", exc)
         raise HTTPException(502, "Founder Memory chat could not complete. Please retry.") from exc

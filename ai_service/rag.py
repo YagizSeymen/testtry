@@ -7,6 +7,7 @@ crawls the web and it never treats retrieved Memory as instructions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -18,9 +19,11 @@ from .model_router import ModelProviderError, ModelRouter, configured_openai_api
 
 ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = ROOT / "prompts" / "founder_chat.md"
+FOUNDER_CHAT_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 256
 MAX_RETRIEVED_CHUNKS = 8
+MAX_OUTPUT_TOKENS = 700
 
 CHAT_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -38,8 +41,8 @@ def _tokens(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 1}
 
 
-def _lexical_score(query: str, chunk: dict[str, Any]) -> float:
-    query_tokens = _tokens(query)
+def _lexical_score(query: str, chunk: dict[str, Any], query_tokens: set[str] | None = None) -> float:
+    query_tokens = query_tokens if query_tokens is not None else _tokens(query)
     if not query_tokens:
         return 0.0
     corpus = f"{chunk.get('founder_name', '')} {chunk.get('label', '')} {chunk.get('content', '')}"
@@ -97,13 +100,15 @@ def answer_founder_memory(payload: dict[str, Any]) -> dict[str, Any]:
     """Retrieve relevant Memory chunks and return one grounded cited answer."""
 
     message = str(payload.get("message") or "").strip()
+    chat_id = str(payload.get("chat_id") or "deterministic-chat")
     chunks = [dict(chunk) for chunk in payload.get("chunks", []) if isinstance(chunk, dict)]
+    query_tokens = _tokens(message)
     router = ModelRouter()
     invocation = router.invocation("founder_chat")
 
     if invocation.mode == "deterministic":
         ranked = sorted(
-            ({**chunk, "retrieval_score": _lexical_score(message, chunk)} for chunk in chunks),
+            ({**chunk, "retrieval_score": _lexical_score(message, chunk, query_tokens)} for chunk in chunks),
             key=lambda chunk: float(chunk["retrieval_score"]),
             reverse=True,
         )
@@ -122,7 +127,9 @@ def answer_founder_memory(payload: dict[str, Any]) -> dict[str, Any]:
     # Embedding and generation share one 60-second serverless request. Bound
     # each provider round trip so a stalled call cannot consume the full slot.
     client = OpenAI(api_key=api_key, timeout=25.0, max_retries=0)
-    missing = [chunk for chunk in chunks if _parse_embedding(chunk.get("embedding_json")) is None]
+    for chunk in chunks:
+        chunk["_embedding"] = _parse_embedding(chunk.get("embedding_json"))
+    missing = [chunk for chunk in chunks if chunk["_embedding"] is None]
     embedding_inputs = [message] + [str(chunk["content"]) for chunk in missing]
     try:
         embedding_response = client.embeddings.create(
@@ -141,13 +148,13 @@ def answer_founder_memory(payload: dict[str, Any]) -> dict[str, Any]:
     embedding_updates: dict[str, list[float]] = {}
     for chunk, embedding in zip(missing, vectors[1:]):
         chunk["embedding_json"] = embedding
+        chunk["_embedding"] = embedding
         embedding_updates[str(chunk["chunk_id"])] = embedding
 
     ranked: list[dict[str, Any]] = []
     for chunk in chunks:
-        embedding = _parse_embedding(chunk.get("embedding_json"))
-        vector_score = _cosine(query_embedding, embedding or [])
-        score = vector_score + min(0.12, _lexical_score(message, chunk) * 0.1)
+        vector_score = _cosine(query_embedding, chunk["_embedding"] or [])
+        score = vector_score + min(0.12, _lexical_score(message, chunk, query_tokens) * 0.1)
         ranked.append({**chunk, "retrieval_score": score})
     ranked.sort(key=lambda chunk: float(chunk["retrieval_score"]), reverse=True)
     selected = ranked[:MAX_RETRIEVED_CHUNKS]
@@ -165,12 +172,14 @@ def answer_founder_memory(payload: dict[str, Any]) -> dict[str, Any]:
         for index, chunk in enumerate(selected, start=1)
     ]
     history = payload.get("history") if isinstance(payload.get("history"), list) else []
-    prompt = PROMPT_PATH.read_text(encoding="utf-8")
     request = {
         "model": invocation.model,
         "reasoning": {"effort": "none"},
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "prompt_cache_key": f"founder-memory-{hashlib.sha256(chat_id.encode('utf-8')).hexdigest()[:24]}",
+        "store": False,
         "input": [
-            {"role": "developer", "content": prompt},
+            {"role": "developer", "content": FOUNDER_CHAT_PROMPT},
             {
                 "role": "user",
                 "content": json.dumps(

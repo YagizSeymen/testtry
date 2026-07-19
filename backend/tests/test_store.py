@@ -5,13 +5,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from backend.main import PostgresConnection, Store, decision_brief, founder_search_match, postgres_sql, validator_report
+from backend.main import PostgresConnection, Store, decision_brief, founder_memory_chat, founder_search_match, postgres_sql, validator_report
 
 
 class StoreTests(unittest.TestCase):
+    def test_chat_id_remains_optional_for_existing_api_clients(self) -> None:
+        with patch("backend.main.store.sync_rag_chunks", return_value=[]):
+            response = founder_memory_chat({"message": "What evidence exists?", "history": []})
+
+        self.assertTrue(response["insufficient_evidence"])
+        self.assertEqual(response["citations"], [])
+
     def test_rag_chunks_cover_memory_and_reuse_only_current_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")
@@ -34,6 +42,11 @@ class StoreTests(unittest.TestCase):
             source_types = {chunk["source_type"] for chunk in chunks}
             claim_chunk = next(chunk for chunk in chunks if chunk["source_type"] == "claim")
             store.save_rag_embeddings({claim_chunk["chunk_id"]: [0.1, 0.2, 0.3]})
+            with store.connection() as db:
+                db.execute(
+                    "UPDATE rag_chunks SET updated_at = ? WHERE chunk_id = ?",
+                    ("2025-01-01T00:00:00Z", claim_chunk["chunk_id"]),
+                )
             unchanged = store.sync_rag_chunks(created["founder_id"])
             unchanged_claim = next(chunk for chunk in unchanged if chunk["chunk_id"] == claim_chunk["chunk_id"])
             with store.connection() as db:
@@ -46,6 +59,7 @@ class StoreTests(unittest.TestCase):
 
         self.assertTrue({"profile", "application", "claim"}.issubset(source_types))
         self.assertIsNotNone(unchanged_claim["embedding_json"])
+        self.assertEqual(unchanged_claim["updated_at"], "2025-01-01T00:00:00Z")
         self.assertIsNone(changed_claim["embedding_json"])
 
     def test_application_research_is_idempotent_and_product_copy_does_not_inflate_founder_score(self) -> None:
@@ -232,6 +246,10 @@ class StoreTests(unittest.TestCase):
                 self.calls.append((statement, parameters))
                 return "cursor"
 
+            def executemany(self, statement: str, parameters: list[tuple[object, ...]]) -> str:
+                self.calls.extend((statement, item) for item in parameters)
+                return "cursor"
+
         raw = RecordingConnection()
         connection = PostgresConnection(raw)
 
@@ -241,7 +259,17 @@ class StoreTests(unittest.TestCase):
             "SELECT * FROM signals WHERE text LIKE 'Live %%' AND founder_id = %s",
         )
         self.assertEqual(connection.execute("UPDATE thesis SET payload = ?", ("{}",)), "cursor")
-        self.assertEqual(raw.calls, [("UPDATE thesis SET payload = %s", ("{}",))])
+        self.assertEqual(
+            connection.executemany("UPDATE rag_chunks SET embedding_json = ? WHERE chunk_id = ?", [("[]", "rag_1")]),
+            "cursor",
+        )
+        self.assertEqual(
+            raw.calls,
+            [
+                ("UPDATE thesis SET payload = %s", ("{}",)),
+                ("UPDATE rag_chunks SET embedding_json = %s WHERE chunk_id = %s", ("[]", "rag_1")),
+            ],
+        )
 
     def test_live_discovery_promotes_review_leads_but_excludes_funded_candidates(self) -> None:
         live_result = {

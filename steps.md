@@ -118,6 +118,7 @@ POST /api/query {q}
       results: [{founder_id, why_matched: [str]}]}
 
 POST /api/chat {message,
+                chat_id?: str,
                 founder_id: founder_id | null,
                 history: [{role: "user" | "assistant", content}]}
   -> {answer, insufficient_evidence: bool,
@@ -195,6 +196,9 @@ Founder Memory chat invariants:
   chunks. It never performs a web crawl during chat.
 - A null founder_id searches all Founder Memory; a founder_id scopes retrieval
   to that person. Conversation history is context only and never evidence.
+- chat_id identifies one browser conversation and provides a stable,
+  non-sensitive prompt-cache routing key. It is optional for compatibility
+  with older clients. Chat histories remain client-side.
 - Chunk IDs are stable. Unchanged 256-dimensional text-embedding-3-small
   vectors are retained in the product database; changed chunks are re-embedded.
 - GPT-5.6 Luna writes one schema-constrained answer from the top retrieved
