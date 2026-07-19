@@ -9,12 +9,8 @@
       "root": ".",
       "framework": "fastapi",
       "entrypoint": "main:app",
-      "functions": {
-        "main.py": {
-          "maxDuration": 60,
-          "excludeFiles": "{.venv/**,frontend/**,**/__pycache__/**,**/tests/**,**/test_*.py,challenge2.pdf,Plan.md}"
-        }
-      }
+      "maxDuration": 60,
+      "excludeFiles": "{.venv/**,frontend/**,**/__pycache__/**,**/tests/**,**/test_*.py,challenge2.pdf,Plan.md}"
     }
   },
   "rewrites": [
