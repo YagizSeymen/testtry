@@ -30,6 +30,28 @@ class ApplicationRepository:
     def save(self) -> None:
         self._db.commit()
 
+    def list_memo_ready_open(self) -> list[Application]:
+        stmt = (
+            select(Application)
+            .where(Application.status == "open")
+            .where(Application.memo_json.is_not(None))
+            .options(selectinload(Application.founder))
+            .order_by(Application.created_at)
+        )
+        return list(self._db.scalars(stmt).all())
+
+    def list_all_apps(self) -> list[Application]:
+        stmt = select(Application).options(
+            selectinload(Application.founder).selectinload(Founder.signals)
+        )
+        return list(self._db.scalars(stmt).all())
+
+    def list_audit(self, *, founder_id: str | None = None) -> list[AuditEvent]:
+        stmt = select(AuditEvent).order_by(AuditEvent.ts.asc(), AuditEvent.id.asc())
+        if founder_id:
+            stmt = stmt.where(AuditEvent.founder_id == founder_id)
+        return list(self._db.scalars(stmt).all())
+
     def add_audit(
         self,
         *,
@@ -39,18 +61,19 @@ class ApplicationRepository:
         founder_id: str | None = None,
         application_id: str | None = None,
         actor: str = "system",
-    ) -> None:
-        self._db.add(
-            AuditEvent(
-                ts=datetime.now(timezone.utc),
-                stage=stage,
-                actor=actor,
-                action=action,
-                detail=detail,
-                founder_id=founder_id,
-                application_id=application_id,
-            )
+    ) -> AuditEvent:
+        event = AuditEvent(
+            ts=datetime.now(timezone.utc),
+            stage=stage,
+            actor=actor,
+            action=action,
+            detail=detail,
+            founder_id=founder_id,
+            application_id=application_id,
         )
+        self._db.add(event)
+        self._db.flush()
+        return event
 
 
 def dumps(value: Any) -> str:

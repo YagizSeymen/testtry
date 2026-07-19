@@ -86,6 +86,8 @@ class Application(Base):
     adversarial_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     decision_brief_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     thesis_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     founder: Mapped[Founder] = relationship(back_populates="applications")
 

@@ -8,6 +8,7 @@ from app.domain.founder_score import (
     core_person_name,
     normalize_founder_name,
 )
+from app.domain.metrics import median_minutes, minutes_between
 
 __all__ = [
     "ScoreSnapshot",
@@ -16,6 +17,8 @@ __all__ = [
     "core_person_name",
     "guard_memo_recommendation",
     "map_trust",
+    "median_minutes",
+    "minutes_between",
     "normalize_diligence_row",
     "normalize_founder_name",
 ]

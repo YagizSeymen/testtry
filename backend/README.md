@@ -24,12 +24,11 @@ AI calls go through `IntelligenceService` → `ai_service.pipeline` (determinist
 - Domain: identity + Founder Score
 - `POST/GET /api/thesis`, `GET /api/dashboard`, `GET /api/founders/{id}`
 
-**Commit 2 — application pipeline**
-- `IntelligenceService` adapter (no LangGraph in routes)
-- `POST /api/applications` (extract + founder resolve)
-- `GET /api/applications/{id}` (nullable stages + evidence)
-- `POST .../screen`, `.../diligence`, `.../memo`
-- Stage prerequisites (409) + trust/`based_on` guards + audit rows
+**Commit 3 — human gate**
+- `GET /api/decisions/queue`
+- `POST /api/decisions/{id}/decide` (approve/reject)
+- `GET /api/audit`
+- `GET /api/metrics` (`signal_to_decision_min` + funnel)
 
 ## Tests
 
