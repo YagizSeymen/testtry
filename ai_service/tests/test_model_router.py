@@ -3,10 +3,32 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ai_service.model_router import EXTRACT_RESPONSE_SCHEMA, ModelRouter
+from ai_service.model_router import (
+    EXTRACT_RESPONSE_SCHEMA,
+    ModelProviderError,
+    ModelRouter,
+    configured_openai_api_key,
+)
 
 
 class ModelRouterTest(unittest.TestCase):
+    def test_api_key_is_normalised_for_deployment_dashboard_pastes(self):
+        examples = (
+            "  test-key\n",
+            '"test-key"',
+            "OPENAI_API_KEY=test-key",
+        )
+        for value in examples:
+            with self.subTest(value=value), patch.dict(
+                os.environ, {"OPENAI_API_KEY": value}, clear=False
+            ):
+                self.assertEqual(configured_openai_api_key(), "test-key")
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test\nkey"}, clear=False)
+    def test_api_key_rejects_embedded_newline(self):
+        with self.assertRaisesRegex(ModelProviderError, "embedded newline"):
+            configured_openai_api_key()
+
     @patch("openai.OpenAI")
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False)
     def test_extractor_requests_strict_json_schema(self, openai_class):

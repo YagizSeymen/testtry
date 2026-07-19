@@ -9,14 +9,19 @@ Every candidate assertion is retained only when it names a cited source.
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 from urllib.parse import urlparse
 
 from . import core, memory
 from .crawler import endpoint_research_crawl, source_channel_for
-from .model_router import LUNA_MODEL, ModelProviderError, ModelRouter
+from .model_router import (
+    LUNA_MODEL,
+    ModelProviderError,
+    ModelRouter,
+    configured_openai_api_key,
+    exception_type_chain,
+)
 
 
 VALID_SIGNALS = {
@@ -249,19 +254,10 @@ def _normalise_sourcing_plan(candidate: dict[str, Any], fallback: dict[str, Any]
 
 def endpoint_sourcing_plan(payload: dict[str, Any]) -> dict[str, Any]:
     fallback = _deterministic_sourcing_plan(payload)
-    if ModelRouter().mode != "openai":
-        return fallback
-    candidate = ModelRouter().run(
-        "sourcing_plan",
-        {
-            "thesis": fallback["thesis"],
-            "required_signals": fallback["required_signals"],
-            "seed_query_plan": fallback["queries"],
-            "constraints": fallback["limitations"],
-        },
-        lambda _payload: fallback,
-    )
-    return _normalise_sourcing_plan(candidate, fallback)
+    # Planning is deterministic and already produces the six contract-required
+    # searches. Saving the extra model round trip leaves the Vercel function's
+    # request budget for the actual web search and cited-page crawl.
+    return fallback
 
 
 def _candidate_id(candidate: dict[str, Any]) -> str:
@@ -465,7 +461,7 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 
 
 def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = configured_openai_api_key()
     if not api_key:
         raise ModelProviderError("OPENAI_API_KEY is required for live web candidate discovery.")
     try:
@@ -504,24 +500,29 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
         "requires human confirmation. Return JSON only. Keep a candidate observation only when its source_url "
         "matches a URL citation provided by web search. Report funding as public_vc_funding only when public evidence exists."
     )
-    response = OpenAI(api_key=api_key).responses.create(
-        model=LUNA_MODEL,
-        reasoning={"effort": "none"},
-        tools=[{"type": "web_search", "search_context_size": "medium"}],
-        include=["web_search_call.action.sources"],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "vc_brain_web_discovery",
-                "strict": True,
-                "schema": LIVE_DISCOVERY_SCHEMA,
-            }
-        },
-        input=[
-            {"role": "developer", "content": developer},
-            {"role": "user", "content": json.dumps(prompt)},
-        ],
-    )
+    try:
+        response = OpenAI(api_key=api_key, timeout=45.0, max_retries=0).responses.create(
+            model=LUNA_MODEL,
+            reasoning={"effort": "none"},
+            tools=[{"type": "web_search", "search_context_size": "medium"}],
+            include=["web_search_call.action.sources"],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "vc_brain_web_discovery",
+                    "strict": True,
+                    "schema": LIVE_DISCOVERY_SCHEMA,
+                }
+            },
+            input=[
+                {"role": "developer", "content": developer},
+                {"role": "user", "content": json.dumps(prompt)},
+            ],
+        )
+    except Exception as exc:
+        raise ModelProviderError(
+            f"OpenAI web discovery failed: {exc} [{exception_type_chain(exc)}]"
+        ) from exc
     parsed = _parse_json_object(str(_attr(response, "output_text", "")))
     citation_urls = _response_citation_urls(response)
     if not citation_urls:

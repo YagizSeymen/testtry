@@ -122,6 +122,38 @@ class ModelProviderError(RuntimeError):
     """Raised when a configured model provider cannot produce valid JSON."""
 
 
+def configured_openai_api_key() -> str:
+    """Return a Vercel-safe API key without leaking it into diagnostics.
+
+    Values copied into a deployment dashboard sometimes include a trailing
+    newline, surrounding quotes, or the ``OPENAI_API_KEY=`` label.  Newlines in
+    particular make HTTPX reject the Authorization header locally, which the
+    OpenAI SDK reports as the misleading and near-instant "Connection error".
+    """
+
+    value = os.getenv("OPENAI_API_KEY", "").strip()
+    if value.startswith("OPENAI_API_KEY="):
+        value = value.partition("=")[2].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    if "\r" in value or "\n" in value:
+        raise ModelProviderError(
+            "OPENAI_API_KEY contains an embedded newline; paste only the API key value in Vercel."
+        )
+    return value
+
+
+def exception_type_chain(exc: BaseException) -> str:
+    """Describe provider failures without logging request headers or secrets."""
+
+    names: list[str] = []
+    current: BaseException | None = exc
+    while current is not None and len(names) < 5:
+        names.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return " -> ".join(names)
+
+
 @dataclass(frozen=True)
 class ModelInvocation:
     stage: str
@@ -161,7 +193,7 @@ class ModelRouter:
         return self._run_openai(invocation, payload)
 
     def _run_openai(self, invocation: ModelInvocation, payload: dict[str, Any]) -> dict[str, Any]:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = configured_openai_api_key()
         if not api_key:
             raise ModelProviderError(
                 "OPENAI_API_KEY is required when VC_BRAIN_LLM_MODE=openai."
@@ -206,7 +238,8 @@ class ModelRouter:
             response = client.responses.create(**request)
         except Exception as exc:
             raise ModelProviderError(
-                f"OpenAI request failed for {invocation.stage}: {exc}"
+                f"OpenAI request failed for {invocation.stage}: {exc} "
+                f"[{exception_type_chain(exc)}]"
             ) from exc
         try:
             result = json.loads(response.output_text)
