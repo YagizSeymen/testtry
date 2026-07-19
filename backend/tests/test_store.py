@@ -8,10 +8,25 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from backend.main import PostgresConnection, Store, decision_brief, founder_search_match, postgres_sql
+from backend.main import PostgresConnection, Store, decision_brief, founder_search_match, postgres_sql, validator_report
 
 
 class StoreTests(unittest.TestCase):
+    def test_validator_report_separates_verified_unverified_and_speculation(self) -> None:
+        report = validator_report(
+            {
+                "objections": [
+                    {"verification": "verified", "targets": ["clm_one"], "evidence": ["sig_one"]},
+                    {"verification": "unverified", "targets": ["clm_two"], "evidence": ["sig_two"]},
+                    {"verification": "n/a", "targets": ["clm_three"], "evidence": None},
+                ]
+            }
+        )
+
+        self.assertEqual(report["stats"], {"verified": 1, "unverified": 1, "n/a": 1})
+        self.assertEqual(len(report["findings"]), 3)
+        self.assertIn("does not make an investment decision", report["summary"])
+
     def test_existing_application_founder_axis_is_recalibrated_from_memory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")

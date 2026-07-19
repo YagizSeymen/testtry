@@ -795,6 +795,7 @@ class Store:
             "diligence": diligence,
             "memo": memo,
             "adversarial": adversarial,
+            "validator_report": validator_report(adversarial) if isinstance(adversarial, dict) else None,
             "decision_brief": decision_brief,
             "evidence": evidence,
         }
@@ -915,6 +916,44 @@ def decision_brief(diligence: dict[str, Any], memo: dict[str, Any], adversarial:
         "summary": f"Decision Brief: {counts['red']} red, {counts['yellow']} yellow, {counts['dim']} dim contested pairs; human review required.",
         "contested": contested,
         "stats": {"claims": len(diligence.get("claims", [])), "contested": len(contested), "verified_attacks": verified_attacks},
+    }
+
+
+def validator_report(adversarial: dict[str, Any]) -> dict[str, Any]:
+    """Expose the verifier pass as a distinct, human-readable report."""
+
+    findings = []
+    for index, objection in enumerate(adversarial.get("objections", [])):
+        if not isinstance(objection, dict):
+            continue
+        status = str(objection.get("verification") or "unverified")
+        evidence = [str(item) for item in (objection.get("evidence") or []) if item]
+        if status == "verified":
+            explanation = "The cited Memory evidence supports this counter-case objection."
+        elif status == "unverified":
+            explanation = "The validator could not confirm this objection from the cited Memory evidence."
+        else:
+            explanation = "This objection is speculation and has no evidence to validate."
+        findings.append(
+            {
+                "objection_i": index,
+                "status": status,
+                "targets": [str(item) for item in objection.get("targets", []) if item],
+                "evidence": evidence,
+                "explanation": explanation,
+            }
+        )
+    counts = {
+        status: sum(1 for finding in findings if finding["status"] == status)
+        for status in ("verified", "unverified", "n/a")
+    }
+    return {
+        "summary": (
+            f"Validator Report: {counts['verified']} verified, {counts['unverified']} unverified, "
+            f"{counts['n/a']} speculation findings. Verification does not make an investment decision."
+        ),
+        "findings": findings,
+        "stats": counts,
     }
 
 
@@ -1181,14 +1220,18 @@ def adversary_application(application_id: str) -> dict[str, Any]:
     if application["memo"] is None:
         raise HTTPException(409, "Memo must complete before adversary.")
     if application["adversarial"] is not None and application["decision_brief"] is not None:
-        return {"adversarial": application["adversarial"], "decision_brief": application["decision_brief"]}
+        return {
+            "adversarial": application["adversarial"],
+            "validator_report": application["validator_report"],
+            "decision_brief": application["decision_brief"],
+        }
     signals = store.founder_profile(application["founder_id"])["signals"]
     adversarial = llm.adversary(application["memo"], application["axes"], application["claims"], signals)
     verified = llm.verify_adversary(adversarial, application["claims"], signals)
     brief = decision_brief(application["diligence"], application["memo"], verified)
     store.update_stage(application_id, "adversarial_json", verified, "adversary", "Generated one counter-case and verified attacks in one batch.")
     store.update_stage(application_id, "decision_brief_json", brief, "decision_brief", "Built deterministic non-authoritative Decision Brief.")
-    return {"adversarial": verified, "decision_brief": brief}
+    return {"adversarial": verified, "validator_report": validator_report(verified), "decision_brief": brief}
 
 
 @app.get("/api/decisions/queue")
