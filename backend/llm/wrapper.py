@@ -32,6 +32,9 @@ class LLMWrapper:
     def screen(self, payload: dict[str, Any]) -> dict[str, Any]:
         return pipeline.screen_application(payload)
 
+    def screen_after_research(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return pipeline.screen_application_deterministic(payload)
+
     def diligence(self, claims: list[dict[str, Any]], signals: list[dict[str, Any]]) -> dict[str, Any]:
         return pipeline.diligence_claims({"claims": claims, "signals": signals})
 

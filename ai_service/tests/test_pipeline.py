@@ -95,7 +95,22 @@ class ProductPipelineTest(unittest.TestCase):
                 }
             )
         self.assertEqual(axes["founder"]["score"], 2)
-        self.assertIn("0 independent Memory signals", axes["founder"]["rationale"])
+        self.assertIn("0 score-eligible public Memory signals", axes["founder"]["rationale"])
+
+    def test_post_research_screen_is_deterministic(self):
+        payload = {
+            "company_name": "NeuralKit",
+            "claims": [{"claim_id": "c1", "type": "product", "text": "A product", "source_span": "A product"}],
+            "signals": [],
+            "founder_score": 35,
+            "band": 30,
+            "trend": "flat",
+            "thesis": THESIS,
+        }
+        with patch.object(pipeline.ModelRouter, "run") as run:
+            axes = pipeline.screen_application_deterministic(payload)
+        run.assert_not_called()
+        self.assertEqual(axes["founder"]["score"], 2)
 
     def test_short_query_does_not_inherit_hidden_thesis_sector(self):
         with patch.object(

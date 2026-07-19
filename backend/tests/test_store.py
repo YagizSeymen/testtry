@@ -104,7 +104,7 @@ class StoreTests(unittest.TestCase):
             application = store.application(created["application_id"])
 
         self.assertEqual(application["axes"]["founder"]["score"], 2)
-        self.assertIn("0 independent Memory signals", application["axes"]["founder"]["rationale"])
+        self.assertIn("0 score-eligible public Memory signals", application["axes"]["founder"]["rationale"])
 
     def test_memory_search_supports_partial_technical_ai_and_name_queries(self) -> None:
         profile = {

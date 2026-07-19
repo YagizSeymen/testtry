@@ -338,8 +338,8 @@ def founder_axis_from_evidence(
         "score": score,
         "trend": safe_trend,
         "rationale": (
-            f"Evidence-based Founder axis: {len(unique_signals)} independent Memory signals across "
-            f"{source_diversity} source types; persisted score {founder_score:.0f} with a "
+            f"Evidence-based Founder axis: {len(unique_signals)} score-eligible public Memory signals across "
+            f"{source_diversity} source channels; persisted score {founder_score:.0f} with a "
             f"{band} point uncertainty band. Submitted deck wording does not increase this axis."
         ),
     }
@@ -416,6 +416,15 @@ def screen_application(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("screen requires company_name, claims, signals, Founder Score, trend, and thesis.")
     raw = ModelRouter().run("screen", payload, _fallback_screen)
     return _normalise_axes(raw, payload)
+
+
+def screen_application_deterministic(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run the backend-owned screen after live research without a second model round trip."""
+
+    required = ("company_name", "claims", "signals", "founder_score", "band", "trend", "thesis")
+    if any(key not in payload for key in required):
+        raise ValueError("screen requires company_name, claims, signals, Founder Score, trend, and thesis.")
+    return _fallback_screen(payload)
 
 
 def _fallback_diligence(payload: dict[str, Any]) -> dict[str, Any]:

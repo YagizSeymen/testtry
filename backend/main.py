@@ -1287,11 +1287,12 @@ def screen_application(application_id: str) -> dict[str, Any]:
         raise HTTPException(502, "Public web research failed before screening. Please retry.") from exc
     founder_score = store.score(application["founder_id"])
     thesis = store.get_thesis()
-    axes = llm.screen(
+    profile_signals = store.founder_profile(application["founder_id"])["signals"]
+    axes = llm.screen_after_research(
         {
             "company_name": application["company_name"],
             "claims": application["claims"],
-            "signals": store.founder_profile(application["founder_id"])["signals"],
+            "signals": founder_score_signals(profile_signals),
             "founder_score": founder_score["score"],
             "band": founder_score["band"],
             "trend": founder_score["trend"],
