@@ -777,23 +777,27 @@ class Store:
                 claim = re.sub(r"\s+", " ", str(observation.get("claim") or "")).strip()
                 if not source_url or not evidence_type or not claim:
                     continue
-                signal_id = stable_id("sig", "application-research", app["founder_id"], source_url, evidence_type, claim)
-                exists = db.execute("SELECT 1 FROM signals WHERE signal_id = ?", (signal_id,)).fetchone()
-                if exists is not None:
-                    continue
-                crawl_note = "crawl-confirmed" if observation.get("crawl_verified") is True else "search-cited; crawl review pending"
+                signal_id = stable_id("sig", "application-research", app["founder_id"], source_url, evidence_type)
+                # Repeated web searches may paraphrase the same fact. One URL
+                # contributes at most one Memory record per evidence type.
                 db.execute(
-                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
-                    (
-                        signal_id,
-                        app["founder_id"],
-                        now_iso(),
-                        live_signal_source(source_url),
-                        f"Application research [{evidence_type}|{source_relationship}]: {claim} ({crawl_note})",
-                        source_url,
-                    ),
+                    "DELETE FROM signals WHERE founder_id = ? AND url = ? AND text LIKE ? AND signal_id != ?",
+                    (app["founder_id"], source_url, f"Application research [{evidence_type}%", signal_id),
                 )
-                inserted += 1
+                exists = db.execute("SELECT 1 FROM signals WHERE signal_id = ?", (signal_id,)).fetchone()
+                crawl_note = "crawl-confirmed" if observation.get("crawl_verified") is True else "search-cited; crawl review pending"
+                signal_text = f"Application research [{evidence_type}|{source_relationship}]: {claim} ({crawl_note})"
+                if exists is None:
+                    db.execute(
+                        "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                        (signal_id, app["founder_id"], now_iso(), live_signal_source(source_url), signal_text, source_url),
+                    )
+                    inserted += 1
+                else:
+                    db.execute(
+                        "UPDATE signals SET ts = ?, source = ?, text = ? WHERE signal_id = ?",
+                        (now_iso(), live_signal_source(source_url), signal_text, signal_id),
+                    )
             self._record_score(db, app["founder_id"], now_iso())
             limitations = research.get("limitations") if isinstance(research.get("limitations"), list) else []
             self._audit(

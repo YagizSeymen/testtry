@@ -216,6 +216,34 @@ class ProductPipelineTest(unittest.TestCase):
         self.assertEqual(row["trust"], "med")
         self.assertIn("not independent corroboration", row["note"])
 
+    def test_supported_verdict_drops_resolved_but_irrelevant_evidence(self):
+        claim = {
+            "claim_id": "clm_mrr",
+            "type": "traction",
+            "text": "Bannerbear reached $50K MRR.",
+            "source_span": "Bannerbear reached $50K MRR.",
+        }
+        signals = [
+            {"signal_id": "sig_revenue", "text": "Bannerbear reached $50K MRR."},
+            {"signal_id": "sig_product", "text": "The API generates marketing images."},
+        ]
+        with patch.object(
+            pipeline.ModelRouter,
+            "run",
+            return_value={
+                "claims": [
+                    {
+                        "claim_id": "clm_mrr",
+                        "verdict": "supported",
+                        "evidence": ["sig_revenue", "sig_product"],
+                    }
+                ],
+                "gaps": [],
+            },
+        ):
+            diligence = pipeline.diligence_claims({"claims": [claim], "signals": signals})
+        self.assertEqual(diligence["claims"][0]["evidence"], ["sig_revenue"])
+
     def test_adversary_is_one_pass_and_invalid_evidence_becomes_speculation(self):
         claims = [
             {"claim_id": "clm_market", "type": "market", "text": "AI infrastructure teams need this product.", "source_span": "AI infrastructure teams need this product."}
@@ -229,6 +257,9 @@ class ProductPipelineTest(unittest.TestCase):
         adversarial = pipeline.write_adversary({"memo": memo, "axes": axes, "claims": claims, "signals": SIGNALS})
         self.assertEqual(adversarial["persona"], "Founder-Risk Partner")
         self.assertGreaterEqual(len(adversarial["objections"]), 3)
+        first_evidence = adversarial["objections"][0]["evidence"] or []
+        self.assertNotIn("sig_pre_revenue", first_evidence)
+        self.assertTrue(set(first_evidence) <= {"sig_market_1", "sig_market_2"})
 
         verified = pipeline.verify_adversary(
             {
@@ -251,6 +282,30 @@ class ProductPipelineTest(unittest.TestCase):
         objection = verified["objections"][0]
         self.assertEqual(objection["label"], "speculation")
         self.assertEqual(objection["verification"], "n/a")
+
+    def test_validator_provider_error_falls_back_without_losing_report(self):
+        adversarial = {
+            "persona": "Founder-Risk Partner",
+            "objections": [
+                {
+                    "text": "Bannerbear public evidence does not establish retention.",
+                    "targets": ["clm_market"],
+                    "evidence": ["sig_market_1"],
+                    "label": "evidence-backed",
+                    "verification": "unverified",
+                }
+            ],
+        }
+        with patch.object(
+            pipeline.ModelRouter,
+            "run",
+            side_effect=pipeline.ModelProviderError("malformed JSON"),
+        ):
+            verified = pipeline.verify_adversary(
+                {"adversarial": adversarial, "claims": [], "signals": SIGNALS}
+            )
+        self.assertEqual(len(verified["objections"]), 1)
+        self.assertIn(verified["objections"][0]["verification"], {"verified", "unverified"})
 
     def test_langgraph_pipeline_has_no_decision_stage(self):
         result = pipeline.run_application_pipeline(

@@ -15,7 +15,7 @@ import re
 from operator import add
 from typing import Annotated, Any, Literal, TypedDict
 
-from .model_router import ModelRouter
+from .model_router import ModelProviderError, ModelRouter
 
 try:
     from langgraph.graph import END, START, StateGraph
@@ -465,6 +465,8 @@ def _normalise_diligence(raw: dict[str, Any], payload: dict[str, Any]) -> dict[s
         verdict = _string(candidate.get("verdict"))
         evidence = _dedupe([_string(value) for value in candidate.get("evidence", [])]) if isinstance(candidate.get("evidence"), list) else []
         evidence = [signal_id for signal_id in evidence if signal_id in signals]
+        if verdict == "supported":
+            evidence = [signal_id for signal_id in evidence if _supports(claim, signals[signal_id])]
         if not _string(claim.get("source_span")):
             verdict, evidence = "unverifiable", []
         elif verdict == "contradicted" and not any(_is_contrary(claim, signals[signal_id]) for signal_id in evidence):
@@ -595,13 +597,22 @@ def _normalise_memo(raw: dict[str, Any], payload: dict[str, Any]) -> dict[str, A
     invest = bool(based_on) and bool(recommendation.get("invest", fallback["recommendation"]["invest"]))
     if not based_on:
         invest = False
+    if invest:
+        rationale = _string(recommendation.get("rationale")) or fallback["recommendation"]["rationale"]
+    elif based_on:
+        rationale = (
+            "Hold despite supported claims: evidence quality, thesis fit, or material disclosure gaps remain insufficient "
+            "for a $100K commitment. Confirm current metrics, retention, revenue quality, and ownership before investing."
+        )
+    else:
+        rationale = "Hold because no submitted claim is both exact-span and supported by resolved Memory evidence."
     return {
         "memo_id": _string(raw.get("memo_id")) or fallback["memo_id"],
         "sections": result_sections,
         "recommendation": {
             "invest": invest,
             "amount": 100000,
-            "rationale": _string(recommendation.get("rationale")) or fallback["recommendation"]["rationale"],
+            "rationale": rationale,
             "based_on": based_on,
         },
     }
@@ -656,7 +667,9 @@ def _fallback_adversary(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     cited_signals = research_signals or [item for item in signals if _string(item.get("signal_id"))]
     if targets and cited_signals:
-        cited = cited_signals[:3]
+        target_claim = claim_by_id.get(targets[0], {})
+        relevant_signals = [item for item in cited_signals if _supports(target_claim, item)]
+        cited = (relevant_signals or cited_signals)[:3]
         observations = " ".join(_signal_text(item) for item in cited[:2])
         objections.append(
             {
@@ -752,7 +765,10 @@ def _normalise_adversarial(raw: dict[str, Any], payload: dict[str, Any]) -> dict
 def write_adversary(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload.get("memo"), dict) or not isinstance(payload.get("axes"), dict):
         raise ValueError("adversary requires memo, axes, claims, and signals.")
-    raw = ModelRouter().run("adversary", payload, _fallback_adversary)
+    try:
+        raw = ModelRouter().run("adversary", payload, _fallback_adversary)
+    except ModelProviderError:
+        raw = _fallback_adversary(payload)
     return _normalise_adversarial(raw, payload)
 
 
@@ -774,7 +790,10 @@ def _fallback_verify_adversary(payload: dict[str, Any]) -> dict[str, Any]:
 def verify_adversary(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload.get("adversarial"), dict) or not isinstance(payload.get("signals"), list):
         raise ValueError("adversarial, claims, and signals are required for batch verification.")
-    raw = ModelRouter().run("verify_adversary", payload, _fallback_verify_adversary)
+    try:
+        raw = ModelRouter().run("verify_adversary", payload, _fallback_verify_adversary)
+    except ModelProviderError:
+        raw = _fallback_verify_adversary(payload)
     baseline = _fallback_verify_adversary(payload)
     raw = raw.get("adversarial") if isinstance(raw.get("adversarial"), dict) else raw
     raw_objections = _records(raw.get("objections"))
