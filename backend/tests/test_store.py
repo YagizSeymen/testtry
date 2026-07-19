@@ -8,10 +8,26 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from backend.main import Store, decision_brief
+from backend.main import PostgresConnection, Store, decision_brief, postgres_sql
 
 
 class StoreTests(unittest.TestCase):
+    def test_postgres_adapter_translates_store_placeholders(self) -> None:
+        class RecordingConnection:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, statement: str, parameters: tuple[object, ...]) -> str:
+                self.calls.append((statement, parameters))
+                return "cursor"
+
+        raw = RecordingConnection()
+        connection = PostgresConnection(raw)
+
+        self.assertEqual(postgres_sql("SELECT * FROM founders WHERE founder_id = ?"), "SELECT * FROM founders WHERE founder_id = %s")
+        self.assertEqual(connection.execute("UPDATE thesis SET payload = ?", ("{}",)), "cursor")
+        self.assertEqual(raw.calls, [("UPDATE thesis SET payload = %s", ("{}",))])
+
     def test_live_discovery_promotes_only_qualified_candidates(self) -> None:
         live_result = {
             "discovery": {

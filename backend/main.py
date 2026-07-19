@@ -41,6 +41,15 @@ elif PERSISTENT_DATABASE_PATH.parent.is_dir():
     DATABASE_PATH = PERSISTENT_DATABASE_PATH
 else:
     DATABASE_PATH = Path(__file__).with_name("venture_intelligence.db")
+# The Neon integration normally creates DATABASE_URL. The other names keep the
+# deployment compatible with the standard Vercel Postgres/Neon integrations
+# without requiring a second, manually copied secret.
+POSTGRES_DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("POSTGRES_URL")
+    or os.getenv("POSTGRES_URL_NON_POOLING")
+    or os.getenv("NEON_DATABASE_URL")
+)
 CACHE_PATH = Path(__file__).parent / "fetchers" / "scan_cache.json"
 DEFAULT_THESIS = {
     "sectors": ["AI infrastructure"],
@@ -103,17 +112,56 @@ def parse_ts(value: str, fallback: datetime | None = None) -> datetime:
     return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def postgres_sql(statement: str) -> str:
+    """Translate this module's DB-API SQLite placeholders for psycopg."""
+
+    return statement.replace("?", "%s")
+
+
+class PostgresConnection:
+    """Small adapter that lets the frozen Store queries run on Neon unchanged."""
+
+    def __init__(self, connection: Any) -> None:
+        self.raw = connection
+
+    def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
+        return self.raw.execute(postgres_sql(statement), parameters)
+
+    def commit(self) -> None:
+        self.raw.commit()
+
+    def rollback(self) -> None:
+        self.raw.rollback()
+
+    def close(self) -> None:
+        self.raw.close()
+
+
 class Store:
-    def __init__(self, path: Path = DATABASE_PATH) -> None:
-        self.path = path
+    def __init__(self, path: Path | None = None, database_url: str | None = POSTGRES_DATABASE_URL) -> None:
+        # An explicit path always means local SQLite. This keeps the test suite
+        # and local demo self-contained even if a shell happens to export a
+        # DATABASE_URL. The deployed Store() uses Neon automatically.
+        self.path = path or DATABASE_PATH
+        self.database_url = database_url if path is None else None
         self.initialize()
         self.deduplicate_live_signals()
         self.seed_cache()
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
+    def connection(self) -> Iterator[Any]:
+        if self.database_url:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+            except ImportError as exc:  # pragma: no cover - guarded by deployment requirements
+                raise RuntimeError("PostgreSQL is configured but psycopg is not installed.") from exc
+            connection: Any = PostgresConnection(
+                psycopg.connect(self.database_url, row_factory=dict_row, connect_timeout=10)
+            )
+        else:
+            connection = sqlite3.connect(self.path)
+            connection.row_factory = sqlite3.Row
         try:
             yield connection
             connection.commit()
@@ -125,80 +173,160 @@ class Store:
 
     def initialize(self) -> None:
         with self.connection() as db:
-            db.executescript(
-                """
-                PRAGMA foreign_keys = ON;
-                CREATE TABLE IF NOT EXISTS thesis (
-                  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                  payload TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS founders (
-                  founder_id TEXT PRIMARY KEY,
-                  normalized_name TEXT UNIQUE NOT NULL,
-                  name TEXT NOT NULL,
-                  headline TEXT,
-                  location TEXT,
-                  origin TEXT NOT NULL,
-                  bio TEXT,
-                  created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS signals (
-                  signal_id TEXT PRIMARY KEY,
-                  founder_id TEXT NOT NULL,
-                  ts TEXT NOT NULL,
-                  source TEXT NOT NULL,
-                  text TEXT NOT NULL,
-                  url TEXT,
-                  FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
-                );
-                CREATE TABLE IF NOT EXISTS score_history (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  founder_id TEXT NOT NULL,
-                  ts TEXT NOT NULL,
-                  score REAL NOT NULL,
-                  band INTEGER NOT NULL,
-                  trend TEXT NOT NULL,
-                  FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
-                );
-                CREATE TABLE IF NOT EXISTS applications (
-                  application_id TEXT PRIMARY KEY,
-                  founder_id TEXT NOT NULL,
-                  company_name TEXT NOT NULL,
-                  deck_text TEXT NOT NULL,
-                  status TEXT NOT NULL,
-                  axes_json TEXT,
-                  diligence_json TEXT,
-                  memo_json TEXT,
-                  adversarial_json TEXT,
-                  decision_brief_json TEXT,
-                  created_at TEXT NOT NULL,
-                  FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
-                );
-                CREATE TABLE IF NOT EXISTS claims (
-                  claim_id TEXT PRIMARY KEY,
-                  application_id TEXT NOT NULL,
-                  type TEXT NOT NULL,
-                  text TEXT NOT NULL,
-                  source_span TEXT,
-                  FOREIGN KEY(application_id) REFERENCES applications(application_id)
-                );
-                CREATE TABLE IF NOT EXISTS audit (
-                  audit_id TEXT PRIMARY KEY,
-                  founder_id TEXT,
-                  application_id TEXT,
-                  ts TEXT NOT NULL,
-                  stage TEXT NOT NULL,
-                  actor TEXT NOT NULL,
-                  action TEXT NOT NULL,
-                  detail TEXT NOT NULL
-                );
-                """
-            )
+            if self.database_url:
+                for statement in (
+                    """
+                    CREATE TABLE IF NOT EXISTS thesis (
+                      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                      payload TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS founders (
+                      founder_id TEXT PRIMARY KEY,
+                      normalized_name TEXT UNIQUE NOT NULL,
+                      name TEXT NOT NULL,
+                      headline TEXT,
+                      location TEXT,
+                      origin TEXT NOT NULL,
+                      bio TEXT,
+                      created_at TEXT NOT NULL
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS signals (
+                      signal_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL REFERENCES founders(founder_id),
+                      ts TEXT NOT NULL,
+                      source TEXT NOT NULL,
+                      text TEXT NOT NULL,
+                      url TEXT
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS score_history (
+                      id BIGSERIAL PRIMARY KEY,
+                      founder_id TEXT NOT NULL REFERENCES founders(founder_id),
+                      ts TEXT NOT NULL,
+                      score REAL NOT NULL,
+                      band INTEGER NOT NULL,
+                      trend TEXT NOT NULL
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS applications (
+                      application_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL REFERENCES founders(founder_id),
+                      company_name TEXT NOT NULL,
+                      deck_text TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      axes_json TEXT,
+                      diligence_json TEXT,
+                      memo_json TEXT,
+                      adversarial_json TEXT,
+                      decision_brief_json TEXT,
+                      created_at TEXT NOT NULL
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS claims (
+                      claim_id TEXT PRIMARY KEY,
+                      application_id TEXT NOT NULL REFERENCES applications(application_id),
+                      type TEXT NOT NULL,
+                      text TEXT NOT NULL,
+                      source_span TEXT
+                    )
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS audit (
+                      audit_id TEXT PRIMARY KEY,
+                      founder_id TEXT,
+                      application_id TEXT,
+                      ts TEXT NOT NULL,
+                      stage TEXT NOT NULL,
+                      actor TEXT NOT NULL,
+                      action TEXT NOT NULL,
+                      detail TEXT NOT NULL
+                    )
+                    """,
+                ):
+                    db.execute(statement)
+            else:
+                db.executescript(
+                    """
+                    PRAGMA foreign_keys = ON;
+                    CREATE TABLE IF NOT EXISTS thesis (
+                      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                      payload TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS founders (
+                      founder_id TEXT PRIMARY KEY,
+                      normalized_name TEXT UNIQUE NOT NULL,
+                      name TEXT NOT NULL,
+                      headline TEXT,
+                      location TEXT,
+                      origin TEXT NOT NULL,
+                      bio TEXT,
+                      created_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS signals (
+                      signal_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL,
+                      ts TEXT NOT NULL,
+                      source TEXT NOT NULL,
+                      text TEXT NOT NULL,
+                      url TEXT,
+                      FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS score_history (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      founder_id TEXT NOT NULL,
+                      ts TEXT NOT NULL,
+                      score REAL NOT NULL,
+                      band INTEGER NOT NULL,
+                      trend TEXT NOT NULL,
+                      FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS applications (
+                      application_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL,
+                      company_name TEXT NOT NULL,
+                      deck_text TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      axes_json TEXT,
+                      diligence_json TEXT,
+                      memo_json TEXT,
+                      adversarial_json TEXT,
+                      decision_brief_json TEXT,
+                      created_at TEXT NOT NULL,
+                      FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS claims (
+                      claim_id TEXT PRIMARY KEY,
+                      application_id TEXT NOT NULL,
+                      type TEXT NOT NULL,
+                      text TEXT NOT NULL,
+                      source_span TEXT,
+                      FOREIGN KEY(application_id) REFERENCES applications(application_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS audit (
+                      audit_id TEXT PRIMARY KEY,
+                      founder_id TEXT,
+                      application_id TEXT,
+                      ts TEXT NOT NULL,
+                      stage TEXT NOT NULL,
+                      actor TEXT NOT NULL,
+                      action TEXT NOT NULL,
+                      detail TEXT NOT NULL
+                    );
+                    """
+                )
             existing = db.execute("SELECT payload FROM thesis WHERE singleton = 1").fetchone()
             if existing is None:
                 db.execute(
-                    "INSERT INTO thesis(singleton, payload, updated_at) VALUES(1, ?, ?)",
+                    "INSERT INTO thesis(singleton, payload, updated_at) VALUES(1, ?, ?) ON CONFLICT (singleton) DO NOTHING",
                     (dumps(DEFAULT_THESIS), now_iso()),
                 )
 
@@ -400,14 +528,14 @@ class Store:
         removing the redundant records.
         """
 
-        def claim_key(row: sqlite3.Row) -> tuple[str, str] | None:
+        def claim_key(row: Any) -> tuple[str, str] | None:
             text = str(row["text"] or "")
             if not text.startswith("Live ") or ":" not in text:
                 return None
             claim = text.split(":", 1)[1]
             return (str(row["url"] or ""), re.sub(r"\s+", " ", claim).strip().casefold())
 
-        def priority(row: sqlite3.Row) -> tuple[int, str]:
+        def priority(row: Any) -> tuple[int, str]:
             text = str(row["text"] or "").casefold()
             category = text.split(":", 1)[0]
             ranks = {
@@ -422,7 +550,7 @@ class Store:
             rows = db.execute(
                 "SELECT signal_id, founder_id, text, url FROM signals WHERE text LIKE 'Live %' AND url IS NOT NULL"
             ).fetchall()
-            grouped: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+            grouped: dict[tuple[str, str, str], list[Any]] = {}
             for row in rows:
                 key = claim_key(row)
                 if key is not None:
@@ -449,14 +577,14 @@ class Store:
                     )
         return sum(removed_by_founder.values())
 
-    def _signals(self, db: sqlite3.Connection, founder_id: str) -> list[dict[str, Any]]:
+    def _signals(self, db: Any, founder_id: str) -> list[dict[str, Any]]:
         rows = db.execute(
             "SELECT signal_id, ts, source, text, url FROM signals WHERE founder_id = ? ORDER BY ts DESC",
             (founder_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _record_score(self, db: sqlite3.Connection, founder_id: str, snapshot_ts: str) -> dict[str, Any]:
+    def _record_score(self, db: Any, founder_id: str, snapshot_ts: str) -> dict[str, Any]:
         signals = self._signals(db, founder_id)
         snapshot = parse_ts(snapshot_ts)
         source_diversity = len({str(signal["source"]).strip().casefold() for signal in signals})
@@ -512,7 +640,7 @@ class Store:
                 )
         return sorted(output, key=lambda item: item["founder_score"], reverse=True)
 
-    def find_founder(self, founder_id: str) -> sqlite3.Row:
+    def find_founder(self, founder_id: str) -> Any:
         with self.connection() as db:
             founder = db.execute("SELECT * FROM founders WHERE founder_id = ?", (founder_id,)).fetchone()
         if founder is None:
@@ -583,13 +711,21 @@ class Store:
                 )
                 for claim in claims:
                     db.execute(
-                        "INSERT OR REPLACE INTO claims VALUES(?, ?, ?, ?, ?)",
+                        """
+                        INSERT INTO claims(claim_id, application_id, type, text, source_span)
+                        VALUES(?, ?, ?, ?, ?)
+                        ON CONFLICT (claim_id) DO UPDATE SET
+                          application_id = excluded.application_id,
+                          type = excluded.type,
+                          text = excluded.text,
+                          source_span = excluded.source_span
+                        """,
                         (claim["claim_id"], application_id, claim["type"], claim["text"], claim["source_span"]),
                     )
                 self._audit(db, founder_id, application_id, "extract", "system", "extracted_claims", f"Extracted {len(claims)} typed deck claims.")
         return {"application_id": application_id, "founder_id": founder_id, "claims": claims}
 
-    def application_row(self, application_id: str) -> sqlite3.Row:
+    def application_row(self, application_id: str) -> Any:
         with self.connection() as db:
             row = db.execute("SELECT * FROM applications WHERE application_id = ?", (application_id,)).fetchone()
         if row is None:
@@ -658,7 +794,7 @@ class Store:
 
     def _audit(
         self,
-        db: sqlite3.Connection,
+        db: Any,
         founder_id: str | None,
         application_id: str | None,
         stage: str,
@@ -708,10 +844,10 @@ class Store:
 
     def metrics(self) -> dict[str, Any]:
         with self.connection() as db:
-            sourced = db.execute("SELECT COUNT(*) FROM founders").fetchone()[0]
-            screened = db.execute("SELECT COUNT(*) FROM applications WHERE axes_json IS NOT NULL").fetchone()[0]
-            diligenced = db.execute("SELECT COUNT(*) FROM applications WHERE diligence_json IS NOT NULL").fetchone()[0]
-            decided = db.execute("SELECT COUNT(*) FROM applications WHERE status IN ('approved', 'rejected')").fetchone()[0]
+            sourced = db.execute("SELECT COUNT(*) AS count FROM founders").fetchone()["count"]
+            screened = db.execute("SELECT COUNT(*) AS count FROM applications WHERE axes_json IS NOT NULL").fetchone()["count"]
+            diligenced = db.execute("SELECT COUNT(*) AS count FROM applications WHERE diligence_json IS NOT NULL").fetchone()["count"]
+            decided = db.execute("SELECT COUNT(*) AS count FROM applications WHERE status IN ('approved', 'rejected')").fetchone()["count"]
             rows = db.execute(
                 """
                 SELECT MIN(ingested.ts) AS first_signal, MAX(a.ts) AS decided_at
