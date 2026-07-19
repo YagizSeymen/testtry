@@ -64,8 +64,9 @@ routes and must not be used by the frontend.
 
 ## Models and modes
 
-`gpt-5.6-luna` handles extraction and query parsing. `gpt-5.6-terra` handles
-screening, diligence, memo writing, the counter-case, and its verification.
+`gpt-5.4-nano` handles every bounded stage in the Vercel latency profile,
+including extraction, query parsing, screening, diligence, memo writing, the
+counter-case, and its verification.
 
 Deterministic mode is the default and requires no key. It is used for fixtures,
 tests, and parallel backend/frontend work. Model mode is opt-in:

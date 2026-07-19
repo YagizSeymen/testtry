@@ -506,6 +506,7 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
     )
     response = OpenAI(api_key=api_key).responses.create(
         model=LUNA_MODEL,
+        reasoning={"effort": "none"},
         tools=[{"type": "web_search", "search_context_size": "medium"}],
         include=["web_search_call.action.sources"],
         text={

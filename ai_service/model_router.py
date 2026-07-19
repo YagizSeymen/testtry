@@ -13,8 +13,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
-LUNA_MODEL = "gpt-5.6-luna"
-TERRA_MODEL = "gpt-5.6-terra"
+# The Vercel Hobby deployment has a 60-second request ceiling. Route every
+# bounded stage through the fastest GPT model that supports both Responses API
+# structured outputs and web search, rather than using a slower model family
+# for the evidence-writing stages.
+FAST_MODEL = "gpt-5.4-nano"
+LUNA_MODEL = FAST_MODEL
+TERRA_MODEL = FAST_MODEL
 
 MODEL_BY_STAGE = {
     # Product-contract stages. These are the only LLM stages consumed by the
@@ -179,16 +184,16 @@ class ModelRouter:
         )
         request: dict[str, Any] = {
             "model": invocation.model,
+            "reasoning": {"effort": "none"},
             "input": [
                 {"role": "developer", "content": developer_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
         }
         if invocation.stage == "extract":
-            # Deck extraction is a short, schema-constrained task. Low effort
-            # preserves reliable structured output without the latency of the
-            # GPT-5.6 default medium reasoning effort.
-            request["reasoning"] = {"effort": "low"}
+            # Deck extraction remains schema-constrained while avoiding a
+            # reasoning pass, which is important for the 60-second deployment
+            # ceiling.
             request["text"] = {
                 "format": {
                     "type": "json_schema",

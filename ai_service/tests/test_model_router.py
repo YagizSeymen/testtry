@@ -29,7 +29,7 @@ class ModelRouterTest(unittest.TestCase):
         self.assertEqual(result["founder_name"], "Maya Chen")
         openai_class.assert_called_once_with(api_key="test-key", timeout=60.0, max_retries=0)
         request = client.responses.create.call_args.kwargs
-        self.assertEqual(request["reasoning"], {"effort": "low"})
+        self.assertEqual(request["reasoning"], {"effort": "none"})
         response_format = request["text"]["format"]
         self.assertEqual(response_format["type"], "json_schema")
         self.assertTrue(response_format["strict"])

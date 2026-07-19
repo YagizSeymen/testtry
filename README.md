@@ -70,8 +70,9 @@ make dev
 
 `.env` is ignored by Git. Never put the API key in `frontend/.env.local`, a
 `NEXT_PUBLIC_*` variable, a committed file, or a client-side request. The API
-key is read only by the FastAPI process. The router uses `gpt-5.6-luna` for
-extract/query work and `gpt-5.6-terra` for evidence reasoning and memo stages.
+key is read only by the FastAPI process. The router uses `gpt-5.4-nano` with
+no reasoning effort for every bounded stage, keeping the public demo within
+the Vercel function duration ceiling.
 
 ## Public Demo Deployment
 
@@ -172,8 +173,8 @@ Evidence-gated Memory -> inbound application workflow -> human decision
 The backend owns API validation, durable state, person-level identity,
 deterministic score/trust/decision calculations, and audit logging. The AI
 service owns bounded model stages and deterministic fallbacks. Model-backed
-mode uses the configured `gpt-5.6-luna` and `gpt-5.6-terra` routing; without an
-API key, the same typed pipeline runs from its deterministic fallback.
+mode uses the configured `gpt-5.4-nano` routing; without an API key, the same
+typed pipeline runs from its deterministic fallback.
 
 ## Guardrails
 

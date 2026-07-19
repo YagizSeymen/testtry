@@ -42,7 +42,7 @@ class HttpPipelineTest(unittest.TestCase):
     def test_all_contract_endpoints(self):
         health = self.get("/health")
         self.assertEqual(health["runtime_mode"], "deterministic")
-        self.assertEqual(health["model_by_stage"]["memo_write"], "gpt-5.6-terra")
+        self.assertEqual(health["model_by_stage"]["memo_write"], "gpt-5.4-nano")
 
         sourcing_plan = self.post(
             "/v1/ai/sourcing/plan",
