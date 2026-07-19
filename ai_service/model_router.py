@@ -13,11 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
-# The Vercel Hobby deployment has a 60-second request ceiling. Route every
-# bounded stage through the fastest GPT model that supports both Responses API
-# structured outputs and web search, rather than using a slower model family
-# for the evidence-writing stages.
-FAST_MODEL = "gpt-5.4-nano"
+# The Vercel Hobby deployment has a 60-second request ceiling. GPT-5.6 Luna is
+# the cost-sensitive tier and supports Responses API structured outputs plus
+# web search, so it can serve every bounded workflow stage consistently.
+FAST_MODEL = "gpt-5.6-luna"
 LUNA_MODEL = FAST_MODEL
 TERRA_MODEL = FAST_MODEL
 

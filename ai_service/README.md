@@ -64,7 +64,7 @@ routes and must not be used by the frontend.
 
 ## Models and modes
 
-`gpt-5.4-nano` handles every bounded stage in the Vercel latency profile,
+`gpt-5.6-luna` handles every bounded stage in the Vercel latency profile,
 including extraction, query parsing, screening, diligence, memo writing, the
 counter-case, and its verification.
 
