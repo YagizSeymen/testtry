@@ -57,9 +57,10 @@ class LLMWrapper:
         axes: dict[str, Any],
         claims: list[dict[str, Any]],
         signals: list[dict[str, Any]],
+        diligence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return pipeline.write_adversary(
-            {"memo": memo, "axes": axes, "claims": claims, "signals": signals}
+            {"memo": memo, "axes": axes, "claims": claims, "signals": signals, "diligence": diligence or {}}
         )
 
     def verify_adversary(

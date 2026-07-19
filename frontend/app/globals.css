@@ -654,3 +654,8 @@ body { color: var(--ink); }
 .research-evidence-list p { margin: 0; color: #c6dfd4; font-size: 11px; line-height: 1.5; }
 .research-evidence-list a { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; color: #64a4ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: 0.06em; text-decoration: none; text-transform: uppercase; }
 .research-evidence-list a:hover { color: #a7c7ff; text-decoration: underline; }
+.profile-links { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.profile-links a, .timeline-row small a, .report-source { display: inline-flex; align-items: center; gap: 4px; color: #64a4ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-decoration: none; text-transform: uppercase; }
+.profile-links a:hover, .timeline-row small a:hover, .report-source:hover { color: #a7c7ff; text-decoration: underline; }
+.diligence-claim { display: block; margin-bottom: 5px; color: #eafff4; font-size: 11px; line-height: 1.4; }
+.report-source { margin-top: 8px; margin-right: 8px; }

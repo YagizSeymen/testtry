@@ -101,9 +101,11 @@ STAGE_INSTRUCTIONS = {
         "gaps verbatim and do not introduce facts absent from the supplied claims and diligence."
     ),
     "adversary": (
-        "Write one strongest counter-case against the memo. This is one pass, not a debate. "
-        "Every objection must target supplied claim IDs and either cite supplied signal IDs "
-        "or be explicit speculation."
+        "Write one detailed counter-case report with three to five distinct objections against the memo. "
+        "Use the supplied web Memory, diligence verdicts, unresolved claims, disclosure gaps, source concentration, "
+        "traction durability, revenue quality, retention, competition, and financing risk. Positive web facts are not "
+        "sufficient reasons to invest. This is one pass, not a debate. Every objection must target supplied claim IDs "
+        "and either cite supplied signal IDs or be explicit speculation."
     ),
     "verify_adversary": (
         "Use the same truth-gap discipline to verify all supplied adversarial objections "

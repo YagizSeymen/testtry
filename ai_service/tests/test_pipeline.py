@@ -149,6 +149,58 @@ class ProductPipelineTest(unittest.TestCase):
         self.assertNotIn(by_type["traction"], memo["recommendation"]["based_on"])
         self.assertTrue(memo["recommendation"]["invest"])
 
+    def test_diligence_note_cannot_claim_support_after_evidence_is_rejected(self):
+        claim = {
+            "claim_id": "clm_revenue",
+            "type": "traction",
+            "text": "The company reached $50K MRR.",
+            "source_span": "The company reached $50K MRR.",
+        }
+        with patch.object(
+            pipeline.ModelRouter,
+            "run",
+            return_value={
+                "claims": [
+                    {
+                        "claim_id": "clm_revenue",
+                        "verdict": "supported",
+                        "evidence": ["invented_signal"],
+                        "note": "Resolved Memory signals support this claim.",
+                    }
+                ],
+                "gaps": [],
+            },
+        ):
+            diligence = pipeline.diligence_claims({"claims": [claim], "signals": []})
+
+        row = diligence["claims"][0]
+        self.assertEqual(row["verdict"], "unverifiable")
+        self.assertEqual(row["evidence"], [])
+        self.assertEqual(row["note"], "No resolved Memory signal supports or contradicts this claim.")
+
+    def test_two_first_party_urls_do_not_create_high_trust(self):
+        claim = {
+            "claim_id": "clm_mrr",
+            "type": "traction",
+            "text": "Bannerbear reached $50K MRR.",
+            "source_span": "Bannerbear reached $50K MRR.",
+        }
+        signals = [
+            {
+                "signal_id": "sig_blog",
+                "text": "Application research [traction|first_party]: Bannerbear reached $50K MRR on its own blog.",
+            },
+            {
+                "signal_id": "sig_profile",
+                "text": "Application research [traction|professional_profile]: Jon states Bannerbear reached $50K MRR.",
+            },
+        ]
+        diligence = pipeline.diligence_claims({"claims": [claim], "signals": signals})
+        row = diligence["claims"][0]
+        self.assertEqual(row["verdict"], "supported")
+        self.assertEqual(row["trust"], "med")
+        self.assertIn("not independent corroboration", row["note"])
+
     def test_adversary_is_one_pass_and_invalid_evidence_becomes_speculation(self):
         claims = [
             {"claim_id": "clm_market", "type": "market", "text": "AI infrastructure teams need this product.", "source_span": "AI infrastructure teams need this product."}
@@ -161,7 +213,7 @@ class ProductPipelineTest(unittest.TestCase):
         memo = {"memo_id": "memo_1", "sections": {}, "recommendation": {"invest": True, "amount": 100000, "rationale": "test", "based_on": ["clm_market"]}}
         adversarial = pipeline.write_adversary({"memo": memo, "axes": axes, "claims": claims, "signals": SIGNALS})
         self.assertEqual(adversarial["persona"], "Founder-Risk Partner")
-        self.assertTrue(adversarial["objections"])
+        self.assertGreaterEqual(len(adversarial["objections"]), 3)
 
         verified = pipeline.verify_adversary(
             {

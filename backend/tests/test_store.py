@@ -34,12 +34,14 @@ class StoreTests(unittest.TestCase):
                 "observations": [
                     {
                         "evidence_type": "product",
+                        "source_relationship": "first_party",
                         "claim": "Mailwarm provides email deliverability tooling.",
                         "source_url": "https://example.com/mailwarm",
                         "crawl_verified": True,
                     },
                     {
                         "evidence_type": "technical_background",
+                        "source_relationship": "independent",
                         "claim": "Amine Benjelloun built the Mailwarm product.",
                         "source_url": "https://example.com/amine",
                         "crawl_verified": True,

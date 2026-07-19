@@ -33,6 +33,7 @@ class SourcingPipelineTest(unittest.TestCase):
             "observations": [
                 {
                     "evidence_type": "technical_background",
+                    "source_relationship": "independent",
                     "claim": "Amine Benjelloun publicly built Mailwarm.",
                     "quote": "Amine Benjelloun publicly built Mailwarm.",
                     "source_url": cited,
@@ -40,6 +41,7 @@ class SourcingPipelineTest(unittest.TestCase):
                 },
                 {
                     "evidence_type": "traction",
+                    "source_relationship": "unknown",
                     "claim": "An uncited revenue claim.",
                     "quote": "An uncited revenue claim.",
                     "source_url": uncited,

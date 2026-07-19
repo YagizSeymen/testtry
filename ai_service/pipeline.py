@@ -311,6 +311,11 @@ def _supports(claim: dict[str, Any], signal: dict[str, Any]) -> bool:
     return False
 
 
+def _application_source_relationship(signal: dict[str, Any]) -> str | None:
+    match = re.match(r"Application research \[[^]|]+\|([^]]+)\]:", _signal_text(signal))
+    return match.group(1) if match else None
+
+
 def founder_axis_from_evidence(
     founder_score: float,
     band: int,
@@ -460,23 +465,61 @@ def _normalise_diligence(raw: dict[str, Any], payload: dict[str, Any]) -> dict[s
         elif verdict not in {"supported", "contradicted", "unverifiable"}:
             fallback_item = fallback_by_id.get(claim_id, {})
             verdict, evidence = fallback_item.get("verdict", "unverifiable"), fallback_item.get("evidence", [])
+        relationships: list[str] = []
         if verdict == "supported":
-            trust = "high" if len(evidence) >= 2 else "med"
+            relationships = [
+                relationship
+                for signal_id in evidence
+                if signal_id in signals
+                for relationship in [_application_source_relationship(signals[signal_id])]
+                if relationship
+            ]
+            independently_corroborated = not relationships or "independent" in relationships
+            trust = "high" if len(evidence) >= 2 and independently_corroborated else "med"
         else:
             trust = "low"
+        evidence_text = [
+            re.sub(r"\s+", " ", _signal_text(signals[signal_id])).strip()
+            for signal_id in evidence
+            if signal_id in signals and _signal_text(signals[signal_id]).strip()
+        ]
+        evidence_summary = "; ".join(evidence_text[:2])
+        if not _string(claim.get("source_span")):
+            note = "Claim lacks an exact source span in the submitted deck, so it cannot be committed."
+        elif verdict == "supported":
+            independence_note = (
+                " Trust is capped at medium because the cited public evidence is founder/company-controlled or profile-derived, not independent corroboration."
+                if relationships and "independent" not in relationships
+                else ""
+            )
+            note = f"Supported by {len(evidence)} resolved Memory signal(s): {evidence_summary}{independence_note}"
+        elif verdict == "contradicted":
+            note = f"Contradicted by resolved Memory evidence: {evidence_summary}"
+        else:
+            note = "No resolved Memory signal supports or contradicts this claim."
         normalised.append(
             {
                 "claim_id": claim_id,
                 "verdict": verdict,
                 "trust": trust,
                 "evidence": evidence,
-                "note": _string(candidate.get("note")) or _string(fallback_by_id.get(claim_id, {}).get("note"), "Evidence was not resolved."),
+                "note": note,
             }
         )
     gaps = _dedupe([_string(item) for item in raw.get("gaps", [])]) if isinstance(raw.get("gaps"), list) else []
     if "Cap table: not disclosed" not in gaps:
         gaps.append("Cap table: not disclosed")
     return {"claims": normalised, "gaps": gaps}
+
+
+def normalize_diligence_result(
+    diligence: dict[str, Any],
+    claims: list[dict[str, Any]],
+    signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Reapply evidence gates and consistent notes to persisted diligence."""
+
+    return _normalise_diligence(diligence, {"claims": claims, "signals": signals})
 
 
 def diligence_claims(payload: dict[str, Any]) -> dict[str, Any]:
@@ -590,29 +633,75 @@ def _fallback_adversary(payload: dict[str, Any]) -> dict[str, Any]:
     claim_ids = { _string(item.get("claim_id")) for item in claims }
     based_on = [claim_id for claim_id in memo.get("recommendation", {}).get("based_on", []) if claim_id in claim_ids]
     targets = based_on or sorted(claim_ids)
+    claim_by_id = {_string(item.get("claim_id")): item for item in claims}
+    diligence = payload.get("diligence") if isinstance(payload.get("diligence"), dict) else {}
+    diligence_by_id = {
+        _string(item.get("claim_id")): item
+        for item in _records(diligence.get("claims"))
+        if _string(item.get("claim_id"))
+    }
     objections: list[dict[str, Any]] = []
-    if targets and signals:
-        signal = next((item for item in signals if _string(item.get("signal_id"))), None)
-        if signal is not None:
-            signal_id = _string(signal.get("signal_id"))
-            objections.append(
-                {
-                    "text": f"Counter-case: Memory contains this evidence requiring scrutiny before approval: {_signal_text(signal)}",
-                    "targets": targets[:1],
-                    "evidence": [signal_id],
-                    "label": "evidence-backed",
-                    "verification": "unverified",
-                }
-            )
-    if targets:
+    research_signals = [
+        item for item in signals
+        if _string(item.get("signal_id")) and _string(item.get("text")).startswith("Application research [")
+    ]
+    cited_signals = research_signals or [item for item in signals if _string(item.get("signal_id"))]
+    if targets and cited_signals:
+        cited = cited_signals[:3]
+        observations = " ".join(_signal_text(item) for item in cited[:2])
         objections.append(
             {
-                "text": "Speculation: the current evidence may not persist at the scale implied by the memo.",
+                "text": (
+                    f"Public Memory confirms observable facts—{observations}—but these sources do not by themselves "
+                    "establish retention, margins, current growth, or that historical traction remains durable."
+                ),
+                "targets": targets[:1],
+                "evidence": [_string(item.get("signal_id")) for item in cited],
+                "label": "evidence-backed",
+                "verification": "unverified",
+            }
+        )
+    for claim_id in targets:
+        row = diligence_by_id.get(claim_id, {})
+        verdict = _string(row.get("verdict"))
+        if verdict not in {"unverifiable", "contradicted"}:
+            continue
+        claim_text = _string(claim_by_id.get(claim_id, {}).get("text"), "The submitted claim")
+        objection = (
+            f"The claim “{claim_text}” remains externally unverified. Underwriting it would convert founder-supplied "
+            "wording into an investment fact without independent corroboration."
+            if verdict == "unverifiable"
+            else f"The claim “{claim_text}” conflicts with resolved Memory evidence and requires direct reconciliation before investment."
+        )
+        objections.append(
+            {"text": objection, "targets": [claim_id], "evidence": None, "label": "speculation", "verification": "n/a"}
+        )
+        if len(objections) >= 3:
+            break
+    gaps = [str(item) for item in diligence.get("gaps", []) if str(item).strip()]
+    if targets and gaps:
+        objections.append(
+            {
+                "text": (
+                    f"Material disclosure gaps remain ({'; '.join(gaps[:3])}). Ownership, dilution, investor rights, "
+                    "and financing obligations must be confirmed before a $100K commitment."
+                ),
                 "targets": targets[:1],
                 "evidence": None,
                 "label": "speculation",
                 "verification": "n/a",
             }
+        )
+    generic_risks = [
+        "The available public evidence is a point-in-time snapshot and does not establish customer retention or current operating health.",
+        "Revenue quality remains uncertain without cohort retention, churn, gross margin, customer concentration, and cash reconciliation.",
+        "Product visibility does not establish competitive defensibility; switching costs, distribution durability, and copy risk require direct testing.",
+    ]
+    for risk in generic_risks:
+        if not targets or len(objections) >= 3:
+            break
+        objections.append(
+            {"text": risk, "targets": targets[:1], "evidence": None, "label": "speculation", "verification": "n/a"}
         )
     return {"persona": persona, "objections": objections}
 
@@ -640,7 +729,15 @@ def _normalise_adversarial(raw: dict[str, Any], payload: dict[str, Any]) -> dict
                 "verification": "unverified" if evidence else "n/a",
             }
         )
-    return {"persona": persona, "objections": objections or fallback["objections"]}
+    seen_text = {_string(item.get("text")).casefold() for item in objections}
+    for fallback_item in fallback["objections"]:
+        text = _string(fallback_item.get("text"))
+        if text and text.casefold() not in seen_text:
+            objections.append(fallback_item)
+            seen_text.add(text.casefold())
+        if len(objections) >= 4:
+            break
+    return {"persona": persona, "objections": (objections or fallback["objections"])[:5]}
 
 
 def write_adversary(payload: dict[str, Any]) -> dict[str, Any]:

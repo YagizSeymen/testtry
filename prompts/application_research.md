@@ -12,8 +12,20 @@ background. Never infer that funding, revenue, customers, or cap-table facts do
 not exist merely because you did not find them. Explicitly retain contradictions
 when a public source conflicts with a submitted claim.
 
+Actively search for the founder's public personal GitHub or LinkedIn profile.
+When identity matches, retain that URL as `professional_profile`; do not mistake
+a company page, repository contributor, or similarly named person for the
+founder. Prefer a full first and last name and explicitly report when no matching
+personal profile can be verified.
+
+Classify every observation's `source_relationship`: `first_party` for the
+company's site or founder-authored material, `professional_profile` for the
+founder's GitHub/LinkedIn, `independent` only for a genuinely unaffiliated
+publication/database, and `unknown` when control is unclear. Multiple
+founder-controlled URLs are not independent corroboration.
+
 Each observation must contain a concise factual claim, a short exact source
 excerpt, its source title, and its cited URL. Do not include search-result pages,
 the submitted deck, unsupported biography, opinions, recommendations, or another
-person/company with a similar name. Return at most eight observations and list
+person/company with a similar name. Return at most ten observations and list
 coverage limitations. Return only the requested JSON object.

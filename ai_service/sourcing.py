@@ -83,13 +83,14 @@ APPLICATION_RESEARCH_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["evidence_type", "claim", "quote", "source_url", "source_title"],
+                "required": ["evidence_type", "source_relationship", "claim", "quote", "source_url", "source_title"],
                 "properties": {
                     "evidence_type": {
                         "type": "string",
                         "enum": [
                             "founder_identity",
                             "technical_background",
+                            "professional_profile",
                             "execution",
                             "product",
                             "traction",
@@ -98,6 +99,10 @@ APPLICATION_RESEARCH_SCHEMA = {
                             "market",
                             "contradiction",
                         ],
+                    },
+                    "source_relationship": {
+                        "type": "string",
+                        "enum": ["first_party", "independent", "professional_profile", "unknown"],
                     },
                     "claim": {"type": "string"},
                     "quote": {"type": "string"},
@@ -565,7 +570,7 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict) and str(item.get("text") or "").strip()
         ],
         "limits": {
-            "max_observations": 8,
+            "max_observations": 10,
             "identity_must_match": True,
             "external_sources_only": True,
         },
@@ -603,12 +608,14 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         source_url = str(raw.get("source_url") or "").strip()
         evidence_type = str(raw.get("evidence_type") or "").strip()
+        source_relationship = str(raw.get("source_relationship") or "unknown").strip()
         claim = re.sub(r"\s+", " ", str(raw.get("claim") or "")).strip()
         quote = re.sub(r"\s+", " ", str(raw.get("quote") or "")).strip()
         key = (source_url, evidence_type, claim.casefold())
         if (
             source_url not in citation_urls
             or evidence_type not in APPLICATION_RESEARCH_SCHEMA["properties"]["observations"]["items"]["properties"]["evidence_type"]["enum"]
+            or source_relationship not in APPLICATION_RESEARCH_SCHEMA["properties"]["observations"]["items"]["properties"]["source_relationship"]["enum"]
             or not claim
             or not quote
             or key in seen
@@ -618,6 +625,7 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
         retained.append(
             {
                 "evidence_type": evidence_type,
+                "source_relationship": source_relationship,
                 "claim": claim,
                 "quote": quote,
                 "source_url": source_url,
@@ -625,7 +633,7 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
                 "crawl_verified": False,
             }
         )
-        if len(retained) == 8:
+        if len(retained) == 10:
             break
 
     limitations = [str(item) for item in parsed.get("limitations", []) if str(item).strip()]
@@ -692,7 +700,10 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
         "distinct, very-early candidate founders and companies matching the thesis. Search across the supplied "
         "GitHub, hackathon, research, accelerator, launch, customer, and funding queries instead of stopping after "
         "the first familiar company. Prioritize independent builders, recent repositories, demos, product launches, "
-        "and newly formed startups. Return between four and the requested max_candidates when cited evidence permits. "
+        "and newly formed startups. Return full first and last names for founders; omit anonymous, partial, or uncertain "
+        "identities. For each founder, actively look for a public personal GitHub or LinkedIn profile and retain it as a "
+        "technical_founder observation only when the page directly identifies that same person. Return between four and "
+        "the requested max_candidates when cited evidence permits. "
         "Do not recommend investments or invent facts. Omit a company when positive public VC funding evidence is "
         "found, but do not reject a lead merely because funding status is unknown; that uncertainty requires human "
         "confirmation. Return JSON only. Keep a candidate observation only when its source_url "

@@ -118,12 +118,12 @@ def live_profile_origin(sources: set[str]) -> str:
 def founder_score_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep diligence evidence broad while scoring only founder-relevant research."""
 
-    excluded_application_types = {"founder_identity", "product", "funding", "market"}
+    excluded_application_types = {"founder_identity", "professional_profile", "product", "funding", "market"}
     retained: list[dict[str, Any]] = []
     seen_application_pages: set[str] = set()
     for signal in signals:
         text = str(signal.get("text") or "")
-        match = re.match(r"Application research \[([^]]+)\]:", text)
+        match = re.match(r"Application research \[([^]|]+)(?:\|[^]]+)?\]:", text)
         if match:
             if match.group(1) in excluded_application_types:
                 continue
@@ -768,11 +768,12 @@ class Store:
         observations = research.get("observations") if isinstance(research.get("observations"), list) else []
         inserted = 0
         with self.connection() as db:
-            for observation in observations[:8]:
+            for observation in observations[:10]:
                 if not isinstance(observation, dict):
                     continue
                 source_url = str(observation.get("source_url") or "").strip()
                 evidence_type = str(observation.get("evidence_type") or "").strip()
+                source_relationship = str(observation.get("source_relationship") or "unknown").strip()
                 claim = re.sub(r"\s+", " ", str(observation.get("claim") or "")).strip()
                 if not source_url or not evidence_type or not claim:
                     continue
@@ -788,7 +789,7 @@ class Store:
                         app["founder_id"],
                         now_iso(),
                         live_signal_source(source_url),
-                        f"Application research [{evidence_type}]: {claim} ({crawl_note})",
+                        f"Application research [{evidence_type}|{source_relationship}]: {claim} ({crawl_note})",
                         source_url,
                     ),
                 )
@@ -820,6 +821,7 @@ class Store:
 
     def application(self, application_id: str) -> dict[str, Any]:
         app = self.application_row(application_id)
+        application_claims = self.claims(application_id)
         axes = loads(app["axes_json"], None)
         diligence = loads(app["diligence_json"], None)
         memo = loads(app["memo_json"], None)
@@ -852,6 +854,12 @@ class Store:
             }
         )
         evidence = list(evidence_by_id.values())
+        if isinstance(diligence, dict):
+            diligence = product_pipeline.normalize_diligence_result(
+                diligence,
+                application_claims,
+                founder_signals,
+            )
         if isinstance(axes, dict):
             founder_score = self.score(app["founder_id"])
             axes = dict(axes)
@@ -866,12 +874,12 @@ class Store:
             "founder_id": app["founder_id"],
             "company_name": app["company_name"],
             "status": app["status"],
-            "claims": self.claims(application_id),
+            "claims": application_claims,
             "axes": axes,
             "diligence": diligence,
             "memo": memo,
             "adversarial": adversarial,
-            "validator_report": validator_report(adversarial) if isinstance(adversarial, dict) else None,
+            "validator_report": validator_report(adversarial, founder_signals) if isinstance(adversarial, dict) else None,
             "decision_brief": decision_brief,
             "evidence": evidence,
         }
@@ -995,21 +1003,34 @@ def decision_brief(diligence: dict[str, Any], memo: dict[str, Any], adversarial:
     }
 
 
-def validator_report(adversarial: dict[str, Any]) -> dict[str, Any]:
+def validator_report(adversarial: dict[str, Any], signals: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Expose the verifier pass as a distinct, human-readable report."""
 
     findings = []
+    signal_map = {
+        str(item.get("signal_id")): item
+        for item in (signals or [])
+        if isinstance(item, dict) and item.get("signal_id")
+    }
     for index, objection in enumerate(adversarial.get("objections", [])):
         if not isinstance(objection, dict):
             continue
         status = str(objection.get("verification") or "unverified")
         evidence = [str(item) for item in (objection.get("evidence") or []) if item]
+        evidence_details = [
+            re.sub(r"\s+", " ", str(signal_map[item].get("text") or "")).strip()
+            for item in evidence
+            if item in signal_map
+        ]
         if status == "verified":
-            explanation = "The cited Memory evidence supports this counter-case objection."
+            explanation = (
+                f"Verified against {len(evidence)} resolved Memory record(s). "
+                + (f"Cited facts: {'; '.join(evidence_details[:2])}" if evidence_details else "The cited records are valid and relevant to the objection.")
+            )
         elif status == "unverified":
-            explanation = "The validator could not confirm this objection from the cited Memory evidence."
+            explanation = "The validator could not confirm this objection from the cited Memory evidence; treat it as an open diligence question, not a fact."
         else:
-            explanation = "This objection is speculation and has no evidence to validate."
+            explanation = "This is an explicit risk hypothesis with no validating Memory evidence. It must not be treated as fact, but should be tested before investing."
         findings.append(
             {
                 "objection_i": index,
@@ -1313,12 +1334,14 @@ def adversary_application(application_id: str) -> dict[str, Any]:
             "decision_brief": application["decision_brief"],
         }
     signals = store.founder_profile(application["founder_id"])["signals"]
-    adversarial = llm.adversary(application["memo"], application["axes"], application["claims"], signals)
+    adversarial = llm.adversary(
+        application["memo"], application["axes"], application["claims"], signals, application["diligence"]
+    )
     verified = llm.verify_adversary(adversarial, application["claims"], signals)
     brief = decision_brief(application["diligence"], application["memo"], verified)
     store.update_stage(application_id, "adversarial_json", verified, "adversary", "Generated one counter-case and verified attacks in one batch.")
     store.update_stage(application_id, "decision_brief_json", brief, "decision_brief", "Built deterministic non-authoritative Decision Brief.")
-    return {"adversarial": verified, "validator_report": validator_report(verified), "decision_brief": brief}
+    return {"adversarial": verified, "validator_report": validator_report(verified, signals), "decision_brief": brief}
 
 
 @app.get("/api/decisions/queue")
