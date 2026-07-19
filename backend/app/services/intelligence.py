@@ -38,3 +38,9 @@ class IntelligenceService:
         from ai_service.pipeline import write_memo
 
         return write_memo(payload)
+
+    def parse_query(self, *, q: str, thesis: dict[str, Any]) -> dict[str, Any]:
+        _ensure_repo_on_path()
+        from ai_service.pipeline import parse_query
+
+        return parse_query({"q": q, "thesis": thesis})

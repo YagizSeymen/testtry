@@ -24,11 +24,11 @@ AI calls go through `IntelligenceService` → `ai_service.pipeline` (determinist
 - Domain: identity + Founder Score
 - `POST/GET /api/thesis`, `GET /api/dashboard`, `GET /api/founders/{id}`
 
-**Commit 3 — human gate**
-- `GET /api/decisions/queue`
-- `POST /api/decisions/{id}/decide` (approve/reject)
-- `GET /api/audit`
-- `GET /api/metrics` (`signal_to_decision_min` + funnel)
+**Commit 4 — sourcing UX**
+- `POST /api/query` (NL → filter → Memory match + why_matched)
+- `POST /api/founders/{id}/activate` (outreach draft only)
+- `POST /api/scan/run` (always `cached: true`)
+- `backend/fetchers/scan_cache.json` source-shaped cache stub
 
 ## Tests
 

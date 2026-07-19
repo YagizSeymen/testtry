@@ -3,6 +3,7 @@ from app.services.decision_service import DecisionService
 from app.services.founder_service import FounderQueryService
 from app.services.intelligence import IntelligenceService
 from app.services.seed_service import SeedService
+from app.services.sourcing_service import SourcingService
 from app.services.thesis_service import ThesisService
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "FounderQueryService",
     "IntelligenceService",
     "SeedService",
+    "SourcingService",
     "ThesisService",
 ]

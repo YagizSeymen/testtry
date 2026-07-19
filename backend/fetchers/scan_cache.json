@@ -1,0 +1,15 @@
+[
+  {
+    "source": "synthetic",
+    "profile_url": null,
+    "username": "maya-chen-synthetic",
+    "display_name": "Maya Chen (Synthetic)",
+    "fetched_at": "2026-07-18T08:00:00Z",
+    "cached": true,
+    "raw": {
+      "origin": "synthetic",
+      "headline": "Technical founder building AI infrastructure",
+      "note": "Reviewed cache record. Ingest via same normalize/dedup/score path as live scan."
+    }
+  }
+]
