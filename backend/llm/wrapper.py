@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_service import pipeline
+from ai_service import pipeline, sourcing
 
 
 class LLMWrapper:
@@ -18,6 +18,16 @@ class LLMWrapper:
 
     def query(self, query: str, thesis: dict[str, Any]) -> dict[str, Any]:
         return pipeline.parse_query({"q": query, "thesis": thesis})
+
+    def research_application(
+        self,
+        company_name: str,
+        founder_name: str,
+        claims: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return sourcing.research_application_public_web(
+            {"company_name": company_name, "founder_name": founder_name, "claims": claims}
+        )
 
     def screen(self, payload: dict[str, Any]) -> dict[str, Any]:
         return pipeline.screen_application(payload)

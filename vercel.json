@@ -9,7 +9,7 @@
       "root": "backend",
       "framework": "fastapi",
       "entrypoint": "main:app",
-      "buildCommand": "cp -R ../ai_service .",
+      "buildCommand": "cp -R ../ai_service . && cp -R ../prompts .",
       "functions": {
         "main.py": {
           "maxDuration": 60,

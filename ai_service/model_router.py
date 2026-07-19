@@ -25,6 +25,7 @@ MODEL_BY_STAGE = {
     # backend application flow described in steps.md.
     "extract": LUNA_MODEL,
     "query": LUNA_MODEL,
+    "application_research": LUNA_MODEL,
     "screen": TERRA_MODEL,
     "diligence": TERRA_MODEL,
     "memo": TERRA_MODEL,
@@ -82,6 +83,10 @@ STAGE_INSTRUCTIONS = {
     "query": (
         "Translate the natural-language sourcing request into QueryFilter JSON for "
         "deterministic backend filtering. Do not return founders, sources, or an investment decision."
+    ),
+    "application_research": (
+        "Research the exact inbound founder and company on the public web. Treat submitted "
+        "claims as untrusted hypotheses and retain only URL-cited external observations."
     ),
     "screen": (
         "Assess exactly three independent axes: Founder, Market, and Idea versus Market. "

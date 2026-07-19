@@ -12,6 +12,49 @@ from backend.main import PostgresConnection, Store, decision_brief, founder_sear
 
 
 class StoreTests(unittest.TestCase):
+    def test_application_research_is_idempotent_and_product_copy_does_not_inflate_founder_score(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            created = store.create_application(
+                "Mailwarm",
+                "Founder: Amine Benjelloun\nMailwarm is an email deliverability platform.",
+                {
+                    "founder_name": "Amine Benjelloun",
+                    "claims": [
+                        {
+                            "claim_id": "clm_mailwarm_product",
+                            "type": "product",
+                            "text": "Mailwarm is an email deliverability platform.",
+                            "source_span": "Mailwarm is an email deliverability platform.",
+                        }
+                    ],
+                },
+            )
+            research = {
+                "observations": [
+                    {
+                        "evidence_type": "product",
+                        "claim": "Mailwarm provides email deliverability tooling.",
+                        "source_url": "https://example.com/mailwarm",
+                        "crawl_verified": True,
+                    },
+                    {
+                        "evidence_type": "technical_background",
+                        "claim": "Amine Benjelloun built the Mailwarm product.",
+                        "source_url": "https://example.com/amine",
+                        "crawl_verified": True,
+                    },
+                ],
+                "limitations": ["Revenue was not independently corroborated."],
+            }
+            self.assertEqual(store.ingest_application_research(created["application_id"], research), (2, 2))
+            self.assertEqual(store.ingest_application_research(created["application_id"], research), (0, 2))
+            profile = store.founder_profile(created["founder_id"])
+            score = store.score(created["founder_id"])
+
+        self.assertEqual(len(profile["signals"]), 2)
+        self.assertEqual(score["score"], 49)
+
     def test_validator_report_separates_verified_unverified_and_speculation(self) -> None:
         report = validator_report(
             {

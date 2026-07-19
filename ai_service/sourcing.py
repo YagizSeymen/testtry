@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -71,6 +72,47 @@ LIVE_DISCOVERY_SCHEMA = {
         "limitations": {"type": "array", "items": {"type": "string"}},
     },
 }
+
+APPLICATION_RESEARCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["observations", "limitations"],
+    "properties": {
+        "observations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["evidence_type", "claim", "quote", "source_url", "source_title"],
+                "properties": {
+                    "evidence_type": {
+                        "type": "string",
+                        "enum": [
+                            "founder_identity",
+                            "technical_background",
+                            "execution",
+                            "product",
+                            "traction",
+                            "customer",
+                            "funding",
+                            "market",
+                            "contradiction",
+                        ],
+                    },
+                    "claim": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "source_url": {"type": "string"},
+                    "source_title": {"type": "string"},
+                },
+            },
+        },
+        "limitations": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+APPLICATION_RESEARCH_PROMPT = (
+    Path(__file__).resolve().parents[1] / "prompts" / "application_research.md"
+)
 DEFAULT_REQUIRED_SIGNALS = [
     "europe_location",
     "technical_founder",
@@ -468,6 +510,150 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ModelProviderError("Web discovery returned a non-object JSON value.")
     return parsed
+
+
+def _normalised_page_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def _same_public_page(left: str, right: str) -> bool:
+    def key(value: str) -> tuple[str, str]:
+        parsed = urlparse(value)
+        return ((parsed.hostname or "").casefold(), parsed.path.rstrip("/").casefold())
+
+    return key(left) == key(right)
+
+
+def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
+    """Research one named inbound company/founder and retain cited observations.
+
+    This is deliberately narrower than outbound discovery: it cannot introduce
+    another candidate identity, and it never treats the submitted deck as
+    corroboration. A best-effort crawl checks exact excerpts without discarding
+    a search citation merely because the serverless crawler was blocked.
+    """
+
+    company_name = str(payload.get("company_name") or "").strip()
+    founder_name = str(payload.get("founder_name") or "").strip()
+    claims = payload.get("claims") if isinstance(payload.get("claims"), list) else []
+    if not company_name or not founder_name:
+        raise ValueError("company_name and founder_name are required for application research.")
+    if ModelRouter().mode != "openai":
+        return {
+            "observations": [],
+            "limitations": ["Live application research is disabled in deterministic mode."],
+        }
+
+    api_key = configured_openai_api_key()
+    if not api_key:
+        raise ModelProviderError("OPENAI_API_KEY is required for live application research.")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise ModelProviderError("Install ai_service/requirements.txt to enable application research.") from exc
+    try:
+        developer_prompt = APPLICATION_RESEARCH_PROMPT.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ModelProviderError("The application research prompt is unavailable.") from exc
+
+    research_request = {
+        "company_name": company_name,
+        "founder_name": founder_name,
+        "submitted_claims_untrusted": [
+            {"type": str(item.get("type") or ""), "text": str(item.get("text") or "")}
+            for item in claims[:10]
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ],
+        "limits": {
+            "max_observations": 8,
+            "identity_must_match": True,
+            "external_sources_only": True,
+        },
+    }
+    try:
+        response = OpenAI(api_key=api_key, timeout=32.0, max_retries=0).responses.create(
+            model=LUNA_MODEL,
+            reasoning={"effort": "none"},
+            tools=[{"type": "web_search", "search_context_size": "medium"}],
+            include=["web_search_call.action.sources"],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "application_public_web_research",
+                    "strict": True,
+                    "schema": APPLICATION_RESEARCH_SCHEMA,
+                }
+            },
+            input=[
+                {"role": "developer", "content": developer_prompt},
+                {"role": "user", "content": json.dumps(research_request)},
+            ],
+        )
+    except Exception as exc:
+        raise ModelProviderError(
+            f"OpenAI application research failed: {exc} [{exception_type_chain(exc)}]"
+        ) from exc
+
+    parsed = _parse_json_object(str(_attr(response, "output_text", "")))
+    citation_urls = _response_citation_urls(response)
+    retained: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in parsed.get("observations", []):
+        if not isinstance(raw, dict):
+            continue
+        source_url = str(raw.get("source_url") or "").strip()
+        evidence_type = str(raw.get("evidence_type") or "").strip()
+        claim = re.sub(r"\s+", " ", str(raw.get("claim") or "")).strip()
+        quote = re.sub(r"\s+", " ", str(raw.get("quote") or "")).strip()
+        key = (source_url, evidence_type, claim.casefold())
+        if (
+            source_url not in citation_urls
+            or evidence_type not in APPLICATION_RESEARCH_SCHEMA["properties"]["observations"]["items"]["properties"]["evidence_type"]["enum"]
+            or not claim
+            or not quote
+            or key in seen
+        ):
+            continue
+        seen.add(key)
+        retained.append(
+            {
+                "evidence_type": evidence_type,
+                "claim": claim,
+                "quote": quote,
+                "source_url": source_url,
+                "source_title": str(raw.get("source_title") or urlparse(source_url).hostname or source_url),
+                "crawl_verified": False,
+            }
+        )
+        if len(retained) == 8:
+            break
+
+    limitations = [str(item) for item in parsed.get("limitations", []) if str(item).strip()]
+    urls = core.dedupe([item["source_url"] for item in retained])[:6]
+    if urls:
+        crawl = endpoint_research_crawl({"urls": urls})
+        documents = crawl.get("documents") if isinstance(crawl.get("documents"), list) else []
+        for observation in retained:
+            matching = next(
+                (
+                    document
+                    for document in documents
+                    if isinstance(document, dict)
+                    and isinstance(document.get("source"), dict)
+                    and _same_public_page(observation["source_url"], str(document["source"].get("url") or ""))
+                ),
+                None,
+            )
+            if matching is not None:
+                observation["crawl_verified"] = _normalised_page_text(observation["quote"]) in _normalised_page_text(
+                    matching.get("page_text")
+                )
+        limitations.extend(
+            f"Crawler could not independently fetch {item['url']}; its web-search citation remains reviewable."
+            for item in crawl.get("failures", [])
+            if isinstance(item, dict) and item.get("url")
+        )
+    return {"observations": retained, "limitations": core.dedupe(limitations)}
 
 
 def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:

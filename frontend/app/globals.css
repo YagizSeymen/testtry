@@ -646,3 +646,11 @@ body { color: var(--ink); }
 .validator-finding p { color: #c6dfd4; }
 .validator-finding small { color: #799a8d; }
 .validator-summary { border-left-color: #64a4ff; color: #bed7ea; background: #122436; }
+
+/* Inbound web enrichment stays visible and directly traceable to its sources. */
+.research-section { background: #09171a; }
+.research-evidence-list { display: grid; gap: 8px; }
+.research-evidence-list article { border: 1px solid #29434a; padding: 11px 12px; background: #0a1418; }
+.research-evidence-list p { margin: 0; color: #c6dfd4; font-size: 11px; line-height: 1.5; }
+.research-evidence-list a { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; color: #64a4ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: 0.06em; text-decoration: none; text-transform: uppercase; }
+.research-evidence-list a:hover { color: #a7c7ff; text-decoration: underline; }

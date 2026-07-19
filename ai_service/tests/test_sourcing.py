@@ -1,6 +1,10 @@
+import json
 import os
+import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from ai_service import crawler, memory, sourcing
 from ai_service.sourcing_orchestration import run_sourcing_workflow
@@ -22,6 +26,66 @@ Aster has signed five enterprise design partners and is running paid customer pi
 
 
 class SourcingPipelineTest(unittest.TestCase):
+    def test_application_research_retains_only_web_cited_observations(self):
+        cited = "https://example.com/mailwarm"
+        uncited = "https://example.net/unrelated"
+        provider_result = {
+            "observations": [
+                {
+                    "evidence_type": "technical_background",
+                    "claim": "Amine Benjelloun publicly built Mailwarm.",
+                    "quote": "Amine Benjelloun publicly built Mailwarm.",
+                    "source_url": cited,
+                    "source_title": "Mailwarm profile",
+                },
+                {
+                    "evidence_type": "traction",
+                    "claim": "An uncited revenue claim.",
+                    "quote": "An uncited revenue claim.",
+                    "source_url": uncited,
+                    "source_title": "Unrelated",
+                },
+            ],
+            "limitations": ["Cap table was not found."],
+        }
+        response = SimpleNamespace(
+            output_text=json.dumps(provider_result),
+            output=[{"action": {"sources": [{"url": cited}]}}],
+        )
+        fake_openai = SimpleNamespace(
+            OpenAI=lambda **_: SimpleNamespace(
+                responses=SimpleNamespace(create=lambda **__: response)
+            )
+        )
+        crawl_result = {
+            "documents": [
+                {
+                    "source": {"url": cited},
+                    "page_text": "Profile: Amine Benjelloun publicly built Mailwarm.",
+                }
+            ],
+            "failures": [],
+        }
+        with (
+            patch.object(sourcing.ModelRouter, "__init__", return_value=None),
+            patch.object(sourcing.ModelRouter, "mode", "openai", create=True),
+            patch.object(sourcing, "configured_openai_api_key", return_value="test-key"),
+            patch.object(sourcing, "endpoint_research_crawl", return_value=crawl_result),
+            patch.dict(sys.modules, {"openai": fake_openai}),
+        ):
+            result = sourcing.research_application_public_web(
+                {
+                    "company_name": "Mailwarm",
+                    "founder_name": "Amine Benjelloun",
+                    "claims": [{"type": "traction", "text": "Mailwarm reached $50K MRR."}],
+                }
+            )
+
+        self.assertEqual(len(result["observations"]), 1)
+        self.assertEqual(result["observations"][0]["source_url"], cited)
+        self.assertTrue(result["observations"][0]["crawl_verified"])
+        self.assertEqual(result["limitations"], ["Cap table was not found."])
+
     def test_candidate_identity_deduplicates_search_qualifiers(self):
         first = {
             "company_name": "Primer (funding unclear)",

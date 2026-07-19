@@ -115,6 +115,26 @@ def live_profile_origin(sources: set[str]) -> str:
     return "web"
 
 
+def founder_score_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep diligence evidence broad while scoring only founder-relevant research."""
+
+    excluded_application_types = {"founder_identity", "product", "funding", "market"}
+    retained: list[dict[str, Any]] = []
+    seen_application_pages: set[str] = set()
+    for signal in signals:
+        text = str(signal.get("text") or "")
+        match = re.match(r"Application research \[([^]]+)\]:", text)
+        if match:
+            if match.group(1) in excluded_application_types:
+                continue
+            page = str(signal.get("url") or signal.get("signal_id") or "")
+            if page in seen_application_pages:
+                continue
+            seen_application_pages.add(page)
+        retained.append(signal)
+    return retained
+
+
 def parse_ts(value: str, fallback: datetime | None = None) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -601,7 +621,7 @@ class Store:
         return [dict(row) for row in rows]
 
     def _record_score(self, db: Any, founder_id: str, snapshot_ts: str) -> dict[str, Any]:
-        signals = self._signals(db, founder_id)
+        signals = founder_score_signals(self._signals(db, founder_id))
         snapshot = parse_ts(snapshot_ts)
         source_diversity = len({str(signal["source"]).strip().casefold() for signal in signals})
         recent = sum(1 for signal in signals if snapshot - timedelta(days=30) <= parse_ts(signal["ts"]) <= snapshot)
@@ -741,6 +761,51 @@ class Store:
                 self._audit(db, founder_id, application_id, "extract", "system", "extracted_claims", f"Extracted {len(claims)} typed deck claims.")
         return {"application_id": application_id, "founder_id": founder_id, "claims": claims}
 
+    def ingest_application_research(self, application_id: str, research: dict[str, Any]) -> tuple[int, int]:
+        """Store bounded public-web observations against the application's resolved founder."""
+
+        app = self.application_row(application_id)
+        observations = research.get("observations") if isinstance(research.get("observations"), list) else []
+        inserted = 0
+        with self.connection() as db:
+            for observation in observations[:8]:
+                if not isinstance(observation, dict):
+                    continue
+                source_url = str(observation.get("source_url") or "").strip()
+                evidence_type = str(observation.get("evidence_type") or "").strip()
+                claim = re.sub(r"\s+", " ", str(observation.get("claim") or "")).strip()
+                if not source_url or not evidence_type or not claim:
+                    continue
+                signal_id = stable_id("sig", "application-research", app["founder_id"], source_url, evidence_type, claim)
+                exists = db.execute("SELECT 1 FROM signals WHERE signal_id = ?", (signal_id,)).fetchone()
+                if exists is not None:
+                    continue
+                crawl_note = "crawl-confirmed" if observation.get("crawl_verified") is True else "search-cited; crawl review pending"
+                db.execute(
+                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                    (
+                        signal_id,
+                        app["founder_id"],
+                        now_iso(),
+                        live_signal_source(source_url),
+                        f"Application research [{evidence_type}]: {claim} ({crawl_note})",
+                        source_url,
+                    ),
+                )
+                inserted += 1
+            self._record_score(db, app["founder_id"], now_iso())
+            limitations = research.get("limitations") if isinstance(research.get("limitations"), list) else []
+            self._audit(
+                db,
+                app["founder_id"],
+                application_id,
+                "research",
+                "live-web",
+                "researched_inbound_application",
+                f"Retained {inserted} new URL-cited public-web observations; {len(limitations)} limitation(s).",
+            )
+        return inserted, len(observations)
+
     def application_row(self, application_id: str) -> Any:
         with self.connection() as db:
             row = db.execute("SELECT * FROM applications WHERE application_id = ?", (application_id,)).fetchone()
@@ -776,6 +841,17 @@ class Store:
                     tuple(sorted(evidence_ids)),
                 ).fetchall()
             ] if evidence_ids else []
+        # Research evidence is reviewable immediately after screening, before
+        # the diligence judge selects claim-specific evidence IDs.
+        evidence_by_id = {str(item["signal_id"]): item for item in evidence}
+        evidence_by_id.update(
+            {
+                str(signal["signal_id"]): signal
+                for signal in founder_signals
+                if str(signal.get("text") or "").startswith("Application research [")
+            }
+        )
+        evidence = list(evidence_by_id.values())
         if isinstance(axes, dict):
             founder_score = self.score(app["founder_id"])
             axes = dict(axes)
@@ -783,7 +859,7 @@ class Store:
                 float(founder_score["score"]),
                 int(founder_score["band"]),
                 str(founder_score["trend"]),
-                founder_signals,
+                founder_score_signals(founder_signals),
             )
         return {
             "application_id": app["application_id"],
@@ -1177,6 +1253,17 @@ def get_application(application_id: str) -> dict[str, Any]:
 @app.post("/api/applications/{application_id}/screen")
 def screen_application(application_id: str) -> dict[str, Any]:
     application = store.application(application_id)
+    founder = store.find_founder(application["founder_id"])
+    try:
+        research = llm.research_application(
+            application["company_name"],
+            str(founder["name"]),
+            application["claims"],
+        )
+        store.ingest_application_research(application_id, research)
+    except Exception as exc:
+        logger.warning("Inbound public-web research failed for %s: %s", application_id, exc)
+        raise HTTPException(502, "Public web research failed before screening. Please retry.") from exc
     founder_score = store.score(application["founder_id"])
     thesis = store.get_thesis()
     axes = llm.screen(

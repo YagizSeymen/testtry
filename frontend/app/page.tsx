@@ -13,6 +13,7 @@ import {
   Clock3,
   ClipboardCheck,
   Database,
+  ExternalLink,
   FileText,
   Flame,
   LayoutDashboard,
@@ -224,7 +225,7 @@ export default function ProductPage() {
     if (!application) return;
     setBusy(stage); setError(null);
     try {
-      const stageLabels: Record<typeof stage, string> = { screen: "Screen", diligence: "Diligence", memo: "Memo", adversary: "Counter-case" };
+      const stageLabels: Record<typeof stage, string> = { screen: "Web research + screen", diligence: "Diligence", memo: "Memo", adversary: "Counter-case" };
       await timedApi(stageLabels[stage], `/applications/${application.application_id}/${stage}`, { method: "POST", body: "{}" });
       setApplication(await api<Application>(`/applications/${application.application_id}`));
       await refresh();
@@ -379,15 +380,17 @@ function FounderView({ founder, profile, outreach, busy, onActivate, onOpenAppli
 
 function ApplicationView({ application, nextStage, busy, onRun, onDecide, onNew, latencies }: { application: Application | null; nextStage: "screen" | "diligence" | "memo" | "adversary" | null; busy: string | null; onRun: (stage: "screen" | "diligence" | "memo" | "adversary") => void; onDecide: (action: "approve" | "reject") => void; onNew: () => void; latencies: LatencySample[] }) {
   if (!application) return <Empty icon={<FileText size={28} />} title="Create an application to begin evidence review" action="New application" onAction={onNew} />;
-  const runLabel: Record<NonNullable<typeof nextStage>, string> = { screen: "Run 3-axis screen", diligence: "Run truth-gap diligence", memo: "Write investment memo", adversary: "Run Devil's Advocate" };
+  const runLabel: Record<NonNullable<typeof nextStage>, string> = { screen: "Research web + run screen", diligence: "Run truth-gap diligence", memo: "Write investment memo", adversary: "Run Devil's Advocate" };
+  const publicResearch = application.evidence.filter((item) => item.text.startsWith("Application research ["));
   return <div className="workbench">
     <div className="workbench-head"><div><p className="eyebrow">{application.status}</p><h2>{application.company_name}</h2><p>{application.claims.length} deck claims, evidence-first workflow</p></div>{nextStage ? <button className="command-button" onClick={() => onRun(nextStage)} disabled={busy === nextStage}>{busy === nextStage ? <LoaderCircle className="spin" size={17} /> : nextStage === "adversary" ? <Bot size={17} /> : <Sparkles size={17} />}{runLabel[nextStage]}</button> : <div className={`decision-status ${application.status}`}>{application.status === "approved" ? <BadgeCheck size={18} /> : application.status === "rejected" ? <X size={18} /> : <ClipboardCheck size={18} />}{application.status}</div>}</div>
-    <div className="stage-rail"><StageDot label="Claims" ready /><StageDot label="Screen" ready={Boolean(application.axes)} /><StageDot label="Diligence" ready={Boolean(application.diligence)} /><StageDot label="Memo" ready={Boolean(application.memo)} /><StageDot label="Devil + Validator" ready={Boolean(application.adversarial && application.validator_report)} /></div>
+    <div className="stage-rail"><StageDot label="Claims" ready /><StageDot label="Web + Screen" ready={Boolean(application.axes)} /><StageDot label="Diligence" ready={Boolean(application.diligence)} /><StageDot label="Memo" ready={Boolean(application.memo)} /><StageDot label="Devil + Validator" ready={Boolean(application.adversarial && application.validator_report)} /></div>
     <PerformanceSurface latencies={latencies} />
     <div className="workbench-grid">
       <section className="claims-panel"><div className="surface-head"><div><h2>Claims</h2><p>Exact deck spans retained</p></div><FileText size={18} /></div>{application.claims.map((claim) => <article className="claim" key={claim.claim_id}><span className={`claim-type ${claim.type}`}>{claim.type}</span><p>{claim.text}</p><small>{claim.source_span ? "Exact deck span" : "Unverifiable without span"}</small></article>)}</section>
       <section className="analysis-panel">
-        {!application.axes && <Pending title="Screening is ready" body="Run the independent Founder, Market, and Idea versus Market axes." />}
+        {!application.axes && <Pending title="Public research is ready" body="Search cited public sources, enrich Memory, then run the independent Founder, Market, and Idea versus Market axes." />}
+        {publicResearch.length > 0 && <ResearchEvidencePanel evidence={publicResearch} />}
         {application.axes && <AxesPanel axes={application.axes} />}
         {application.diligence && <DiligencePanel diligence={application.diligence} />}
         {application.memo && <MemoPanel memo={application.memo} />}
@@ -397,6 +400,13 @@ function ApplicationView({ application, nextStage, busy, onRun, onDecide, onNew,
       </section>
     </div>
   </div>;
+}
+
+function ResearchEvidencePanel({ evidence }: { evidence: Signal[] }) {
+  return <section className="analysis-section research-section">
+    <div className="section-title"><Database size={18} /><div><h3>Public research evidence</h3><p>{evidence.length} URL-cited observations retained in Memory</p></div></div>
+    <div className="research-evidence-list">{evidence.map((item) => <article key={item.signal_id}><p>{item.text}</p>{item.url && <a href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} />Open source</a>}</article>)}</div>
+  </section>;
 }
 
 function AxesPanel({ axes }: { axes: Axes }) { return <section className="analysis-section"><div className="section-title"><Target size={18} /><div><h3>Three independent axes</h3><p>No blended score</p></div></div><div className="axes-grid"><article><small>Founder</small><b>{axes.founder.score}<em>/10</em></b><Trend value={axes.founder.trend as Founder["trend"]} /><p>{axes.founder.rationale}</p></article><article><small>Market</small><b className="word-score">{axes.market.rating}</b><p>{axes.market.rationale}</p></article><article><small>Idea vs. market</small><b className="word-score">{axes.idea_vs_market.verdict}</b><p>{axes.idea_vs_market.rationale}</p></article></div></section>; }
