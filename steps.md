@@ -110,7 +110,8 @@ GET  /api/dashboard
        origin: "github" | "hn" | "inbound" | "synthetic",
        founder_score, band, trend: "up" | "flat" | "down",
        top_signals: [str],
-       has_open_app: bool}]
+       has_open_app: bool,
+       is_new: bool}]
 
 POST /api/query {q}
   -> {filter: QueryFilter,

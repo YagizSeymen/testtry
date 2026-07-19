@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -40,6 +40,7 @@ type Founder = {
   trend: "up" | "flat" | "down";
   top_signals: string[];
   has_open_app: boolean;
+  is_new: boolean;
 };
 
 type Signal = { signal_id: string; ts: string; source: string; text: string; url: string | null };
@@ -95,6 +96,61 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 const displayDate = (value: string) => new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
 const initials = (name: string) => name.split(" ").map((part) => part[0]).slice(0, 2).join("");
 
+function parsedUrl(value: string | null): URL | null {
+  if (!value) return null;
+  try { return new URL(value); } catch { return null; }
+}
+
+function canonicalUrl(value: string | null): string {
+  const parsed = parsedUrl(value);
+  if (!parsed) return value || "";
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  return `${host}${path.toLowerCase()}`;
+}
+
+function signalGroups(signals: Signal[]): { key: string; primary: Signal; signals: Signal[] }[] {
+  const groups = new Map<string, { key: string; primary: Signal; signals: Signal[] }>();
+  for (const signal of signals) {
+    const key = signal.url ? canonicalUrl(signal.url) : signal.signal_id;
+    const existing = groups.get(key);
+    if (existing) existing.signals.push(signal);
+    else groups.set(key, { key, primary: signal, signals: [signal] });
+  }
+  return Array.from(groups.values());
+}
+
+function uniqueCitedSignals(ids: string[], evidenceMap: Map<string, Signal>): Signal[] {
+  const unique = new Map<string, Signal>();
+  for (const id of ids) {
+    const signal = evidenceMap.get(id);
+    if (!signal?.url) continue;
+    unique.set(canonicalUrl(signal.url), signal);
+  }
+  return Array.from(unique.values());
+}
+
+function publicProfileSignals(signals: Signal[], founderName: string): { label: string; signal: Signal }[] {
+  const founderKey = founderName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const byPlatform = new Map<string, { label: string; signal: Signal }>();
+  for (const signal of signals) {
+    const url = parsedUrl(signal.url);
+    if (!url) continue;
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const label = host === "linkedin.com" && pathParts[0] === "in"
+      ? "LinkedIn"
+      : host === "github.com" && pathParts.length === 1
+        ? "GitHub"
+        : null;
+    if (!label) continue;
+    const identityText = `${signal.text} ${url.pathname}`.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (!identityText.includes(founderKey)) continue;
+    if (!byPlatform.has(label)) byPlatform.set(label, { label, signal });
+  }
+  return Array.from(byPlatform.values());
+}
+
 function Trend({ value }: { value: Founder["trend"] }) {
   if (value === "up") return <span className="trend up"><ArrowUpRight size={14} /> improving</span>;
   if (value === "down") return <span className="trend down"><ArrowDownRight size={14} /> declining</span>;
@@ -126,6 +182,7 @@ export default function ProductPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [latencies, setLatencies] = useState<LatencySample[]>([]);
+  const founderRequestId = useRef(0);
 
   const displayedFounders = useMemo(() => searchIds ? founders.filter((founder) => searchIds.includes(founder.founder_id)) : founders, [founders, searchIds]);
 
@@ -160,17 +217,21 @@ export default function ProductPage() {
   useEffect(() => { void refresh().catch((cause) => setError(cause.message)); }, []);
 
   async function chooseFounder(founder: Founder, goToProfile = true) {
+    const requestId = ++founderRequestId.current;
+    setSelectedFounder(founder);
+    setProfile(null);
+    setOutreach(null);
+    if (goToProfile) setView("founder");
     setBusy("founder");
     try {
       const nextProfile = await api<Profile>(`/founders/${founder.founder_id}`);
-      setSelectedFounder(founder);
+      if (requestId !== founderRequestId.current) return;
       setProfile(nextProfile);
-      setOutreach(null);
-      if (goToProfile) setView("founder");
     } catch (cause) {
+      if (requestId !== founderRequestId.current) return;
       setError(cause instanceof Error ? cause.message : "Unable to load founder.");
     } finally {
-      setBusy(null);
+      if (requestId === founderRequestId.current) setBusy(null);
     }
   }
 
@@ -329,7 +390,7 @@ function DashboardView({ founders, metrics, search, setSearch, searchChips, isSe
         <div className="founder-table">
           <div className="table-head"><span>Founder</span><span>Founder Score</span><span>Top signals</span><span /></div>
           {founders.map((founder) => <button className="founder-row" key={founder.founder_id} onClick={() => onSelect(founder)}>
-            <span className="founder-cell"><span className={`avatar ${founder.origin}`}>{initials(founder.name)}</span><span><strong>{founder.name}</strong><small><i />{founder.origin} evidence</small></span></span>
+            <span className="founder-cell"><span className={`avatar ${founder.origin}`}>{initials(founder.name)}</span><span><strong>{founder.name}{founder.is_new && <em className="new-badge">New</em>}</strong><small><i />{founder.origin} evidence</small></span></span>
             <span className="score-cell"><b>{founder.founder_score}</b><span>+/- {founder.band}</span><Trend value={founder.trend} /></span>
             <span className="signal-cell">{founder.top_signals[0] || "No signal"}</span>
             <ChevronRight size={18} className="row-arrow" />
@@ -366,14 +427,16 @@ function Metric({ label, value, icon, color }: { label: string; value: string | 
 }
 
 function FounderView({ founder, profile, outreach, busy, onActivate, onOpenApplication }: { founder: Founder | null; profile: Profile | null; outreach: string | null; busy: string | null; onActivate: () => void; onOpenApplication: (id: string) => void }) {
-  if (!founder || !profile) return <Empty icon={<UserRound size={28} />} title="Select a founder from discovery" />;
+  if (!founder) return <Empty icon={<UserRound size={28} />} title="Select a founder from discovery" />;
+  if (!profile || profile.profile.founder_id !== founder.founder_id) return <Empty icon={<LoaderCircle className="spin" size={28} />} title={`Loading ${founder.name}'s evidence`} />;
   const score = profile.score_history.at(-1);
-  const publicProfiles = Array.from(new Map(profile.signals.filter((signal) => signal.url && /(^|\.)(github\.com|linkedin\.com)$/i.test(new URL(signal.url).hostname)).map((signal) => [signal.url, signal])).values());
+  const publicProfiles = publicProfileSignals(profile.signals, profile.profile.name);
+  const timelineGroups = signalGroups(profile.signals);
   return <div className="view-grid profile-grid">
     <section className="profile-main">
-      <div className="profile-header"><span className={`avatar large ${profile.profile.origin}`}>{initials(profile.profile.name)}</span><div><p className="eyebrow"><i />{profile.profile.origin} provenance</p><h2>{profile.profile.name}</h2><p>{profile.profile.headline || "Founder profile"}</p><span className="location">{profile.profile.location || "Location not disclosed"}</span>{publicProfiles.length > 0 && <div className="profile-links">{publicProfiles.map((signal) => <a href={signal.url!} target="_blank" rel="noreferrer" key={signal.url}><ExternalLink size={12} />{new URL(signal.url!).hostname.includes("linkedin") ? "LinkedIn" : "GitHub"}</a>)}</div>}</div><button className="command-button profile-action" onClick={onActivate} disabled={busy === "activate"}>{busy === "activate" ? <LoaderCircle className="spin" size={17} /> : <Mail size={17} />}Activate</button></div>
+      <div className="profile-header"><span className={`avatar large ${profile.profile.origin}`}>{initials(profile.profile.name)}</span><div><p className="eyebrow"><i />{profile.profile.origin} provenance</p><h2>{profile.profile.name}</h2><p>{profile.profile.headline || "Founder profile"}</p><span className="location">{profile.profile.location || "Location not disclosed"}</span>{publicProfiles.length > 0 && <div className="profile-links">{publicProfiles.map(({ label, signal }) => <a href={signal.url!} target="_blank" rel="noreferrer" key={label}><ExternalLink size={12} />{label}</a>)}</div>}</div><button className="command-button profile-action" onClick={onActivate} disabled={busy === "activate"}>{busy === "activate" ? <LoaderCircle className="spin" size={17} /> : <Mail size={17} />}Activate</button></div>
       {outreach && <div className="outreach-draft"><div><p className="eyebrow">Review-only outreach draft</p><p>{outreach}</p></div><Send size={19} /></div>}
-      <section className="timeline-surface"><div className="surface-head"><div><h2>Evidence timeline</h2><p>Signals retained in shared Memory</p></div><span className="source-badge"><Database size={14} />{profile.signals.length} signals</span></div><div className="timeline">{profile.signals.map((signal) => <div className="timeline-row" key={signal.signal_id}><span className="timeline-date">{displayDate(signal.ts)}</span><span className={`timeline-marker ${signal.source}`} /><div><p>{signal.text}</p><small><i />{signal.url ? <a href={signal.url} target="_blank" rel="noreferrer">{signal.source} source <ExternalLink size={10} /></a> : `${signal.source} evidence`}</small></div></div>)}</div></section>
+      <section className="timeline-surface"><div className="surface-head"><div><h2>Evidence timeline</h2><p>Signals grouped by cited source in shared Memory</p></div><span className="source-badge"><Database size={14} />{profile.signals.length} signals</span></div><div className="timeline">{timelineGroups.map((group) => <div className="timeline-row" key={group.key}><span className="timeline-date">{displayDate(group.primary.ts)}</span><span className={`timeline-marker ${group.primary.source}`} /><div>{group.signals.map((signal) => <p key={signal.signal_id}>{signal.text}</p>)}<small><i />{group.primary.url ? <a href={group.primary.url} target="_blank" rel="noreferrer">{group.primary.source} source <ExternalLink size={10} /></a> : `${group.primary.source} evidence`}</small></div></div>)}</div></section>
     </section>
     <aside className="profile-side"><section className="score-panel"><p className="eyebrow">Persistent Founder Score</p><div className="score-orbit"><b>{score?.score ?? founder.founder_score}</b><span>+/- {score?.band ?? founder.band}</span></div><Trend value={founder.trend} /><p>{profile.profile.bio}</p></section><section className="app-links"><div className="surface-head"><h2>Applications</h2><span>{profile.applications.length}</span></div>{profile.applications.length ? profile.applications.map((id) => <button key={id} onClick={() => onOpenApplication(id)}><FileText size={16} />{id.slice(-6)}<ChevronRight size={16} /></button>) : <p>No application yet. Activation creates a review-only outreach draft.</p>}</section></aside>
   </div>;
@@ -404,9 +467,10 @@ function ApplicationView({ application, nextStage, busy, onRun, onDecide, onNew,
 }
 
 function ResearchEvidencePanel({ evidence }: { evidence: Signal[] }) {
+  const groups = signalGroups(evidence);
   return <section className="analysis-section research-section">
-    <div className="section-title"><Database size={18} /><div><h3>Public research evidence</h3><p>{evidence.length} URL-cited observations retained in Memory</p></div></div>
-    <div className="research-evidence-list">{evidence.map((item) => <article key={item.signal_id}><p>{item.text}</p>{item.url && <a href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} />Open source</a>}</article>)}</div>
+    <div className="section-title"><Database size={18} /><div><h3>Public research evidence</h3><p>{evidence.length} observations from {groups.length} unique cited sources</p></div></div>
+    <div className="research-evidence-list">{groups.map((group) => <article key={group.key}>{group.signals.map((item) => <p key={item.signal_id}>{item.text}</p>)}{group.primary.url && <a href={group.primary.url} target="_blank" rel="noreferrer"><ExternalLink size={12} />Open source</a>}</article>)}</div>
   </section>;
 }
 
@@ -416,9 +480,9 @@ function DiligencePanel({ diligence, claims }: { diligence: NonNullable<Applicat
 
 function MemoPanel({ memo }: { memo: NonNullable<Application["memo"]> }) { return <section className="analysis-section"><div className="section-title"><FileText size={18} /><div><h3>Investment memo</h3><p>{memo.recommendation.invest ? "Evidence-supported recommendation" : "Evidence threshold not met"}</p></div><span className={memo.recommendation.invest ? "recommendation yes" : "recommendation no"}>{memo.recommendation.invest ? "Invest" : "Hold"}</span></div><div className="memo-copy">{Object.entries(memo.sections).map(([key, value]) => <article key={key}><h4>{key.replace("_", " ")}</h4><p>{value}</p></article>)}</div><div className="memo-footer"><span>Based on {memo.recommendation.based_on.length} committed claims</span><b>${memo.recommendation.amount.toLocaleString()}</b></div></section>; }
 
-function DevilsAdvocateReport({ adversarial, claims, evidence }: { adversarial: NonNullable<Application["adversarial"]>; claims: Claim[]; evidence: Signal[] }) { const claimMap = new Map(claims.map((claim) => [claim.claim_id, claim.text])); const evidenceMap = new Map(evidence.map((item) => [item.signal_id, item])); return <section className="analysis-section adversary-section"><div className="section-title"><Bot size={18} /><div><h3>Devil&apos;s Advocate Report</h3><p>{adversarial.persona} · strongest bounded counter-case</p></div></div>{adversarial.objections.map((objection, index) => <article className="objection" key={`${objection.text}-${index}`}><span className={`verification ${objection.verification}`}>{objection.verification}</span><p>{objection.text}</p><small>Challenges: {objection.targets.map((id) => claimMap.get(id) || id).join(" · ") || "none"}</small>{objection.evidence?.map((id) => evidenceMap.get(id)).filter((item): item is Signal => Boolean(item)).map((item) => item.url && <a className="report-source" href={item.url} target="_blank" rel="noreferrer" key={item.signal_id}><ExternalLink size={11} />Cited source</a>)}</article>)}</section>; }
+function DevilsAdvocateReport({ adversarial, claims, evidence }: { adversarial: NonNullable<Application["adversarial"]>; claims: Claim[]; evidence: Signal[] }) { const claimMap = new Map(claims.map((claim) => [claim.claim_id, claim.text])); const evidenceMap = new Map(evidence.map((item) => [item.signal_id, item])); const cited = uniqueCitedSignals(adversarial.objections.flatMap((objection) => objection.evidence || []), evidenceMap); return <section className="analysis-section adversary-section"><div className="section-title"><Bot size={18} /><div><h3>Devil&apos;s Advocate Report</h3><p>{adversarial.persona} · strongest bounded counter-case</p></div></div>{adversarial.objections.map((objection, index) => <article className="objection" key={`${objection.text}-${index}`}><span className={`verification ${objection.verification}`}>{objection.verification}</span><p>{objection.text}</p><small>Challenges: {objection.targets.map((id) => claimMap.get(id) || id).join(" · ") || "none"}</small></article>)}{cited.length > 0 && <div className="report-sources"><b>Citations</b>{cited.map((item) => <a className="report-source" href={item.url!} target="_blank" rel="noreferrer" key={canonicalUrl(item.url)}><ExternalLink size={11} />{parsedUrl(item.url)?.hostname.replace(/^www\./, "") || "Cited source"}</a>)}</div>}</section>; }
 
-function ValidatorReport({ report, brief, claims, evidence }: { report: NonNullable<Application["validator_report"]>; brief: Application["decision_brief"]; claims: Claim[]; evidence: Signal[] }) { const claimMap = new Map(claims.map((claim) => [claim.claim_id, claim.text])); const evidenceMap = new Map(evidence.map((item) => [item.signal_id, item])); return <section className="analysis-section validator-section"><div className="section-title"><ShieldAlert size={18} /><div><h3>Validator Report</h3><p>Independent evidence check of every counter-case objection</p></div></div><div className="validator-list">{report.findings.map((finding) => <article className="validator-finding" key={finding.objection_i}><span className={`verification ${finding.status}`}>{finding.status}</span><div><p>{finding.explanation}</p><small>Challenges: {finding.targets.map((id) => claimMap.get(id) || id).join(" · ") || "none"}</small>{finding.evidence.map((id) => evidenceMap.get(id)).filter((item): item is Signal => Boolean(item)).map((item) => item.url && <a className="report-source" href={item.url} target="_blank" rel="noreferrer" key={item.signal_id}><ExternalLink size={11} />Validated source</a>)}</div></article>)}</div><div className="validator-summary"><b>Validator summary</b><p>{report.summary}</p></div>{brief && <div className="decision-brief"><ClipboardCheck size={17} /><div><b>Decision Brief</b><p>{brief.summary}</p></div></div>}</section>; }
+function ValidatorReport({ report, brief, claims, evidence }: { report: NonNullable<Application["validator_report"]>; brief: Application["decision_brief"]; claims: Claim[]; evidence: Signal[] }) { const claimMap = new Map(claims.map((claim) => [claim.claim_id, claim.text])); const evidenceMap = new Map(evidence.map((item) => [item.signal_id, item])); const cited = uniqueCitedSignals(report.findings.flatMap((finding) => finding.evidence), evidenceMap); return <section className="analysis-section validator-section"><div className="section-title"><ShieldAlert size={18} /><div><h3>Validator Report</h3><p>Independent evidence check of every counter-case objection</p></div></div><div className="validator-list">{report.findings.map((finding) => <article className="validator-finding" key={finding.objection_i}><span className={`verification ${finding.status}`}>{finding.status}</span><div><p>{finding.explanation}</p><small>Challenges: {finding.targets.map((id) => claimMap.get(id) || id).join(" · ") || "none"}</small></div></article>)}</div>{cited.length > 0 && <div className="report-sources"><b>Validated citations</b>{cited.map((item) => <a className="report-source" href={item.url!} target="_blank" rel="noreferrer" key={canonicalUrl(item.url)}><ExternalLink size={11} />{parsedUrl(item.url)?.hostname.replace(/^www\./, "") || "Validated source"}</a>)}</div>}<div className="validator-summary"><b>Validator summary</b><p>{report.summary}</p></div>{brief && <div className="decision-brief"><ClipboardCheck size={17} /><div><b>Decision Brief</b><p>{brief.summary}</p></div></div>}</section>; }
 
 function DecisionView({ queue, application, onOpen }: { queue: QueueItem[]; application: Application | null; onOpen: (id: string) => void }) { return <div className="decision-layout"><section className="decision-list"><div className="surface-head"><div><h2>Open decisions</h2><p>Memo + verified attacks remain side by side</p></div><span>{queue.length}</span></div>{queue.map((item) => <button className="queue-row" key={item.application_id} onClick={() => onOpen(item.application_id)}><span className="queue-icon"><ClipboardCheck size={18} /></span><span><strong>{item.company}</strong><small>{item.recommendation.invest ? "Invest recommendation" : "Hold recommendation"}</small></span><ChevronRight size={18} /></button>)}{!queue.length && <div className="queue-empty"><BadgeCheck size={23} />No memo-ready decisions are waiting.</div>}</section><section className="audit-panel"><div className="surface-head"><div><h2>Decision packet</h2><p>{application ? application.company_name : "Select a queue item"}</p></div></div>{application?.decision_brief ? <div className="brief-card"><ClipboardCheck size={19} /><p>{application.decision_brief.summary}</p></div> : <Pending title="Human review stays outside the graph" body="A memo-ready application appears here after the bounded stages complete." />}</section></div>; }
 

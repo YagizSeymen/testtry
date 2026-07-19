@@ -13,6 +13,7 @@ import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
@@ -84,6 +85,84 @@ def stable_id(prefix: str, *parts: Any) -> str:
 
 def normalized_name(value: str) -> str:
     return re.sub(r"[\W_]+", "", value.casefold())
+
+
+def canonical_public_url(value: str) -> str:
+    """Collapse display/tracking variants without changing the cited page."""
+
+    try:
+        parsed = urlparse(value.strip())
+    except ValueError:
+        return value.strip()
+    hostname = (parsed.hostname or "").casefold()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    if not hostname:
+        return value.strip()
+    path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+    return f"{(parsed.scheme or 'https').casefold()}://{hostname}{path}"
+
+
+def _name_tokens(value: str) -> set[str]:
+    ignored = {"dr", "mr", "mrs", "ms", "prof", "founder", "cofounder"}
+    return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 1 and token not in ignored}
+
+
+def _mentions_person(value: str, person_name: str) -> bool:
+    person_tokens = _name_tokens(person_name)
+    value_tokens = _name_tokens(value)
+    return bool(person_tokens) and person_tokens <= value_tokens
+
+
+def _personal_profile_url(value: str) -> bool:
+    parsed = urlparse(value)
+    hostname = (parsed.hostname or "").casefold()
+    path = parsed.path.casefold()
+    return hostname.endswith("linkedin.com") and (path.startswith("/in/") or path.startswith("/posts/"))
+
+
+def _profile_url_matches_person(value: str, person_name: str) -> bool:
+    path_tokens = _name_tokens(urlparse(value).path.replace("-", " "))
+    person_tokens = _name_tokens(person_name)
+    if not person_tokens:
+        return False
+    # LinkedIn slugs normally retain the first name and surname; requiring the
+    # surname plus one additional token avoids cross-linking cofounders.
+    surname = list(_name_tokens(person_name.split()[-1]))
+    return bool(surname and surname[0] in path_tokens and len(person_tokens & path_tokens) >= min(2, len(person_tokens)))
+
+
+def live_evidence_for_founder(
+    evidence: list[dict[str, Any]],
+    founder_name: str,
+    founder_names: list[str],
+    company_name: str,
+) -> list[dict[str, Any]]:
+    """Attribute person-specific observations without cloning cofounder data."""
+
+    if len(founder_names) <= 1:
+        return evidence
+    retained: list[dict[str, Any]] = []
+    personal_types = {"technical_founder", "execution"}
+    for item in evidence:
+        claim = str(item.get("claim") or "")
+        source_url = str(item.get("source_url") or "")
+        signal_type = str(item.get("signal_type") or "")
+        mentioned = [name for name in founder_names if _mentions_person(claim, name)]
+        if mentioned:
+            if any(normalized_name(name) == normalized_name(founder_name) for name in mentioned):
+                retained.append(item)
+            continue
+        if _personal_profile_url(source_url):
+            if _profile_url_matches_person(source_url, founder_name):
+                retained.append(item)
+            continue
+        if signal_type in personal_types and not _mentions_person(claim, company_name):
+            # Pronoun-only career statements cannot safely be copied to every
+            # member of a multi-founder team.
+            continue
+        retained.append(item)
+    return retained
 
 
 def dumps(value: Any) -> str:
@@ -425,7 +504,11 @@ class Store:
                 self._audit(db, founder_id, None, "ingest", "system", "loaded_cached_signals", "Loaded reviewed cache signals.")
         return new_founders, new_signals
 
-    def ingest_live_discovery(self, sourcing_result: dict[str, Any]) -> tuple[int, int]:
+    def ingest_live_discovery(
+        self,
+        sourcing_result: dict[str, Any],
+        discovery_batch_id: str | None = None,
+    ) -> tuple[int, int]:
         """Promote source-backed, reviewable live leads into product Memory.
 
         The sourcing workflow has already ranked evidence coverage. This layer
@@ -442,6 +525,9 @@ class Store:
             if isinstance(evidence, dict) and evidence.get("candidate_id") and evidence.get("source_url") and evidence.get("claim"):
                 evidence_by_candidate.setdefault(str(evidence["candidate_id"]), []).append(evidence)
 
+        batch_id = discovery_batch_id or stable_id("scan", now_iso(), uuid.uuid4().hex)
+        batch_ts = now_iso()
+        batch_started_at = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
         new_founders = 0
         new_signals = 0
         with self.connection() as db:
@@ -467,10 +553,10 @@ class Store:
                 for evidence in candidate_evidence:
                     source_type_key = (
                         str(evidence.get("signal_type") or ""),
-                        str(evidence.get("source_url") or ""),
+                        canonical_public_url(str(evidence.get("source_url") or "")),
                     )
                     claim_key = (
-                        str(evidence.get("source_url") or ""),
+                        canonical_public_url(str(evidence.get("source_url") or "")),
                         re.sub(r"\s+", " ", str(evidence.get("claim") or "")).strip().casefold(),
                     )
                     if source_type_key in seen_source_types or claim_key in seen_claims:
@@ -480,10 +566,15 @@ class Store:
                     deduplicated.append(evidence)
                     if len(deduplicated) == 12:
                         break
-                acquisition_sources = {live_signal_source(str(item["source_url"])) for item in deduplicated}
-                profile_origin = live_profile_origin(acquisition_sources)
-
                 for founder_name in founder_names:
+                    founder_evidence = live_evidence_for_founder(
+                        deduplicated,
+                        founder_name,
+                        founder_names,
+                        str(candidate.get("company_name") or ""),
+                    )
+                    acquisition_sources = {live_signal_source(str(item["source_url"])) for item in founder_evidence}
+                    profile_origin = live_profile_origin(acquisition_sources)
                     key = normalized_name(founder_name)
                     founder = db.execute("SELECT founder_id, origin FROM founders WHERE normalized_name = ?", (key,)).fetchone()
                     if founder is None:
@@ -498,7 +589,7 @@ class Store:
                                 None,
                                 profile_origin,
                                 "Live-sourced public-web lead. Every displayed signal links to its source; identity, traction, and funding status require human review.",
-                                now_iso(),
+                                batch_ts,
                             ),
                         )
                         new_founders += 1
@@ -517,15 +608,19 @@ class Store:
                     # A re-scan refreshes the active, source-backed evidence
                     # from URLs it crawled successfully. It does not preserve
                     # stale keyword matches from a prior crawl of that page.
-                    refreshed_urls = sorted({str(item["source_url"]) for item in deduplicated})
+                    # Clear every URL from this candidate before inserting the
+                    # founder-attributed subset. This also repairs records from
+                    # older builds that cloned all cofounder evidence.
+                    refreshed_urls = sorted({canonical_public_url(str(item["source_url"])) for item in deduplicated})
                     placeholders = ", ".join("?" for _ in refreshed_urls)
                     db.execute(
                         f"DELETE FROM signals WHERE founder_id = ? AND text LIKE 'Live %' AND url IN ({placeholders})",
                         (founder_id, *refreshed_urls),
                     )
 
-                    for evidence in deduplicated:
-                        signal_id = stable_id("sig", "live", founder_id, evidence.get("evidence_id"), evidence.get("source_url"))
+                    for evidence in founder_evidence:
+                        source_url = canonical_public_url(str(evidence["source_url"]))
+                        signal_id = stable_id("sig", "live", founder_id, evidence.get("evidence_id"), source_url)
                         exists = db.execute("SELECT 1 FROM signals WHERE signal_id = ?", (signal_id,)).fetchone()
                         if exists is not None:
                             continue
@@ -536,13 +631,13 @@ class Store:
                                 signal_id,
                                 founder_id,
                                 str(evidence.get("captured_at") or now_iso()),
-                                live_signal_source(str(evidence["source_url"])),
+                                live_signal_source(source_url),
                                 f"Live {signal_type}: {str(evidence['claim']).strip()}",
-                                str(evidence["source_url"]),
+                                source_url,
                             ),
                         )
                         new_signals += 1
-                    self._record_score(db, founder_id, now_iso())
+                    self._record_score(db, founder_id, batch_ts)
                     self._audit(
                         db,
                         founder_id,
@@ -550,7 +645,14 @@ class Store:
                         "ingest",
                         "live-sourcing",
                         "ingested_public_web_signals",
-                        "Stored bounded, source-backed public-web signals for human review.",
+                        dumps(
+                            {
+                                "batch_id": batch_id,
+                                "batch_started_at": batch_started_at,
+                                "company_name": str(candidate.get("company_name") or ""),
+                                "stored_signals": len(founder_evidence),
+                            }
+                        ),
                     )
         return new_founders, new_signals
 
@@ -569,7 +671,7 @@ class Store:
             if not text.startswith("Live ") or ":" not in text:
                 return None
             claim = text.split(":", 1)[1]
-            return (str(row["url"] or ""), re.sub(r"\s+", " ", claim).strip().casefold())
+            return (canonical_public_url(str(row["url"] or "")), re.sub(r"\s+", " ", claim).strip().casefold())
 
         def priority(row: Any) -> tuple[int, str]:
             text = str(row["text"] or "").casefold()
@@ -583,15 +685,55 @@ class Store:
             return (ranks.get(category, 99), str(row["signal_id"]))
 
         with self.connection() as db:
+            founder_rows = db.execute("SELECT founder_id, name FROM founders").fetchall()
+            founder_names = {str(row["founder_id"]): str(row["name"]) for row in founder_rows}
             rows = db.execute(
                 "SELECT signal_id, founder_id, text, url FROM signals WHERE text LIKE 'Live %' AND url IS NOT NULL"
             ).fetchall()
+            named_people_by_url: dict[str, set[str]] = {}
+            for row in rows:
+                text = str(row["text"] or "")
+                url = canonical_public_url(str(row["url"] or ""))
+                named_people_by_url.setdefault(url, set()).update(
+                    founder_id
+                    for founder_id, name in founder_names.items()
+                    if _mentions_person(text, name)
+                )
+
+            removed_by_founder: dict[str, int] = {}
+            removed_signal_ids: set[str] = set()
+            for row in rows:
+                founder_id = str(row["founder_id"])
+                signal_id = str(row["signal_id"])
+                text = str(row["text"] or "")
+                category = text.split(":", 1)[0].casefold()
+                named_ids = named_people_by_url.get(canonical_public_url(str(row["url"] or "")), set())
+                explicitly_named_here = {
+                    other_id
+                    for other_id, other_name in founder_names.items()
+                    if _mentions_person(text, other_name)
+                }
+                wrong_explicit_person = bool(explicitly_named_here) and founder_id not in explicitly_named_here
+                personal_owner_mismatch = _personal_profile_url(str(row["url"] or "")) and not _profile_url_matches_person(
+                    str(row["url"] or ""), founder_names.get(founder_id, "")
+                )
+                ambiguous_person_signal = (
+                    category in {"live technical founder", "live execution"}
+                    and bool(named_ids)
+                    and founder_id not in named_ids
+                )
+                if wrong_explicit_person or personal_owner_mismatch or ambiguous_person_signal:
+                    db.execute("DELETE FROM signals WHERE signal_id = ?", (signal_id,))
+                    removed_signal_ids.add(signal_id)
+                    removed_by_founder[founder_id] = removed_by_founder.get(founder_id, 0) + 1
+
             grouped: dict[tuple[str, str, str], list[Any]] = {}
             for row in rows:
+                if str(row["signal_id"]) in removed_signal_ids:
+                    continue
                 key = claim_key(row)
                 if key is not None:
                     grouped.setdefault((str(row["founder_id"]), *key), []).append(row)
-            removed_by_founder: dict[str, int] = {}
             for records in grouped.values():
                 for duplicate in sorted(records, key=priority)[1:]:
                     db.execute("DELETE FROM signals WHERE signal_id = ?", (duplicate["signal_id"],))
@@ -609,7 +751,7 @@ class Store:
                         "ingest",
                         "system",
                         "deduplicated_live_signals",
-                        f"Removed {removed} duplicate live signal record(s) from one source passage.",
+                        f"Removed {removed} duplicate or cross-founder live signal record(s).",
                     )
         return sum(removed_by_founder.values())
 
@@ -654,6 +796,28 @@ class Store:
 
     def dashboard(self) -> list[dict[str, Any]]:
         with self.connection() as db:
+            latest_batch_id: str | None = None
+            latest_batch_founders: set[str] = set()
+            live_audits = db.execute(
+                "SELECT founder_id, detail FROM audit WHERE action = 'ingested_public_web_signals' ORDER BY ts DESC LIMIT 500"
+            ).fetchall()
+            parsed_audits: list[tuple[str, str, str]] = []
+            for audit in live_audits:
+                try:
+                    detail = json.loads(str(audit["detail"] or ""))
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                batch_id = str(detail.get("batch_id") or "") if isinstance(detail, dict) else ""
+                if not batch_id:
+                    continue
+                batch_started_at = str(detail.get("batch_started_at") or "")
+                parsed_audits.append((str(audit["founder_id"] or ""), batch_id, batch_started_at))
+            if parsed_audits:
+                latest_batch_id = max(parsed_audits, key=lambda item: item[2])[1]
+            if latest_batch_id:
+                latest_batch_founders = {
+                    founder_id for founder_id, batch_id, _ in parsed_audits if batch_id == latest_batch_id
+                }
             founders = db.execute("SELECT * FROM founders ORDER BY name").fetchall()
             output = []
             for founder in founders:
@@ -672,9 +836,20 @@ class Store:
                         "trend": score["trend"],
                         "top_signals": [signal["text"] for signal in top_signals],
                         "has_open_app": bool(open_app),
+                        "is_new": founder["founder_id"] in latest_batch_founders,
                     }
                 )
         return sorted(output, key=lambda item: item["founder_score"], reverse=True)
+
+    def founder_search_context(self, founder_id: str) -> list[str]:
+        """Return company names linked to a founder without changing Profile."""
+
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT DISTINCT company_name FROM applications WHERE founder_id = ?",
+                (founder_id,),
+            ).fetchall()
+        return [str(row["company_name"]) for row in rows if str(row["company_name"] or "").strip()]
 
     def find_founder(self, founder_id: str) -> Any:
         with self.connection() as db:
@@ -771,7 +946,7 @@ class Store:
             for observation in observations[:10]:
                 if not isinstance(observation, dict):
                     continue
-                source_url = str(observation.get("source_url") or "").strip()
+                source_url = canonical_public_url(str(observation.get("source_url") or "").strip())
                 evidence_type = str(observation.get("evidence_type") or "").strip()
                 source_relationship = str(observation.get("source_relationship") or "unknown").strip()
                 claim = re.sub(r"\s+", " ", str(observation.get("claim") or "")).strip()
@@ -1070,13 +1245,37 @@ SEARCH_IGNORED_TOKENS = {
 }
 
 
+def empty_query_filter() -> dict[str, Any]:
+    return {
+        "technical_founder": None,
+        "sectors": [],
+        "geos": [],
+        "shipped_within_days": None,
+        "prior_vc": None,
+    }
+
+
 def _search_tokens(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 1}
+
+
+def _search_stem(token: str) -> str:
+    for suffix in ("ization", "ational", "ments", "ment", "ing", "ics", "ies", "ers", "er", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+    return token
 
 
 def _semantic_token_match(token: str, corpus_tokens: set[str], corpus: str) -> bool:
     if token in corpus_tokens or (len(token) >= 4 and token in corpus):
         return True
+    token_stem = _search_stem(token)
+    for candidate in corpus_tokens:
+        candidate_stem = _search_stem(candidate)
+        if token_stem == candidate_stem:
+            return True
+        if min(len(token), len(candidate)) >= 5 and SequenceMatcher(None, token, candidate).ratio() >= 0.82:
+            return True
     for canonical, aliases in SEARCH_TOKEN_GROUPS.items():
         if token == canonical or token in aliases:
             return bool(aliases & corpus_tokens)
@@ -1088,6 +1287,7 @@ def founder_search_match(
     query_filter: dict[str, Any],
     profile: dict[str, Any],
     signals: list[dict[str, Any]],
+    related_terms: list[str] | None = None,
 ) -> list[str]:
     """Return forgiving, explainable matches over persisted Founder Memory."""
 
@@ -1099,6 +1299,8 @@ def founder_search_match(
             str(profile.get("origin") or ""),
             str(profile.get("bio") or ""),
             *(str(signal.get("text") or "") for signal in signals),
+            *(str(signal.get("url") or "") for signal in signals),
+            *(str(item) for item in (related_terms or [])),
         ]
     ).casefold()
     corpus_tokens = _search_tokens(corpus)
@@ -1155,8 +1357,21 @@ def founder_search_match(
     query_tokens = _search_tokens(query)
     structured_tokens = set().union(*(_search_tokens(sector) for sector in sectors)) if sectors else set()
     free_tokens = query_tokens - SEARCH_IGNORED_TOKENS - structured_tokens
-    if free_tokens and not any(_semantic_token_match(token, corpus_tokens, corpus) for token in free_tokens):
-        return []
+    if free_tokens:
+        matched_free_tokens = {
+            token for token in free_tokens if _semantic_token_match(token, corpus_tokens, corpus)
+        }
+        required_matches = 1 if len(free_tokens) == 1 else math.ceil(len(free_tokens) * 0.6)
+        if len(matched_free_tokens) < required_matches:
+            return []
+        if related_terms and any(
+            sum(
+                _semantic_token_match(token, _search_tokens(term), term.casefold())
+                for token in free_tokens
+            ) >= required_matches
+            for term in related_terms
+        ):
+            why.append("Company or application match")
     if not why:
         why.append("Memory text match")
     return list(dict.fromkeys(why))
@@ -1202,7 +1417,8 @@ def run_scan() -> dict[str, Any]:
     }
     try:
         sourcing_result = sourcing_orchestration.run_sourcing_workflow(live_payload)
-        founders, signals = store.ingest_live_discovery(sourcing_result)
+        discovery_batch_id = stable_id("scan", now_iso(), uuid.uuid4().hex)
+        founders, signals = store.ingest_live_discovery(sourcing_result, discovery_batch_id)
         ranking = sourcing_result.get("ranking") if isinstance(sourcing_result.get("ranking"), dict) else {}
         ranked = ranking.get("ranked_candidates") if isinstance(ranking.get("ranked_candidates"), list) else []
         reviewable = sum(
@@ -1239,11 +1455,38 @@ def query_founders(payload: dict[str, Any]) -> dict[str, Any]:
     q = payload.get("q")
     if not isinstance(q, str) or not q.strip():
         raise HTTPException(422, "q is required.")
-    query_filter = llm.query(q, store.get_thesis())
+    dashboard_rows = store.dashboard()
+    exact_name_matches = [
+        founder for founder in dashboard_rows if normalized_name(str(founder["name"])) == normalized_name(q)
+    ]
+    if exact_name_matches:
+        return {
+            "filter": empty_query_filter(),
+            "results": [
+                {"founder_id": founder["founder_id"], "why_matched": ["Exact founder name"]}
+                for founder in exact_name_matches
+            ],
+        }
+    structured_query = bool(
+        re.search(
+            r"\b(technical|shipped|released|launched|within|last|days?|prior\s+vc|no\s+vc|venture[- ]backed|unfunded)\b",
+            q.casefold(),
+        )
+    )
+    # Plain names, companies, product terms, and paraphrases are a fast local
+    # full-Memory search. Only explicit structured constraints need the model
+    # to produce QueryFilter fields.
+    query_filter = llm.query(q, store.get_thesis()) if structured_query else empty_query_filter()
     results = []
-    for founder in store.dashboard():
+    for founder in dashboard_rows:
         founder_record = store.founder_profile(founder["founder_id"])
-        why = founder_search_match(q, query_filter, founder_record["profile"], founder_record["signals"])
+        why = founder_search_match(
+            q,
+            query_filter,
+            founder_record["profile"],
+            founder_record["signals"],
+            store.founder_search_context(founder["founder_id"]),
+        )
         if why:
             results.append({"founder_id": founder["founder_id"], "why_matched": why})
     return {"filter": query_filter, "results": results}

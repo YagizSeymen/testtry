@@ -529,6 +529,25 @@ def _same_public_page(left: str, right: str) -> bool:
     return key(left) == key(right)
 
 
+def _observation_matches_subject(raw: dict[str, Any], company_name: str, founder_name: str) -> bool:
+    """Reject cited results that belong to a similarly named person/company."""
+
+    searchable = " ".join(
+        str(raw.get(field) or "")
+        for field in ("claim", "quote", "source_title", "source_url")
+    ).casefold()
+    searchable_tokens = set(re.findall(r"[a-z0-9]+", searchable))
+    company_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", company_name.casefold()) if len(token) >= 3
+    }
+    founder_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", founder_name.casefold()) if len(token) >= 3
+    }
+    company_match = bool(company_tokens & searchable_tokens)
+    founder_match = bool(founder_tokens) and founder_tokens <= searchable_tokens
+    return company_match or founder_match
+
+
 def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
     """Research one named inbound company/founder and retain cited observations.
 
@@ -574,12 +593,21 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
             "identity_must_match": True,
             "external_sources_only": True,
         },
+        "required_investigations": [
+            f'Identity: "{founder_name}" "{company_name}" founder',
+            f'Professional profiles: "{founder_name}" LinkedIn GitHub',
+            *(
+                f'Claim check: "{company_name}" {str(item.get("text") or "").strip()}'
+                for item in claims[:8]
+                if isinstance(item, dict) and str(item.get("text") or "").strip()
+            ),
+        ],
     }
     try:
-        response = OpenAI(api_key=api_key, timeout=32.0, max_retries=0).responses.create(
+        response = OpenAI(api_key=api_key, timeout=42.0, max_retries=0).responses.create(
             model=LUNA_MODEL,
             reasoning={"effort": "none"},
-            tools=[{"type": "web_search", "search_context_size": "medium"}],
+            tools=[{"type": "web_search", "search_context_size": "high"}],
             include=["web_search_call.action.sources"],
             text={
                 "format": {
@@ -611,13 +639,18 @@ def research_application_public_web(payload: dict[str, Any]) -> dict[str, Any]:
         source_relationship = str(raw.get("source_relationship") or "unknown").strip()
         claim = re.sub(r"\s+", " ", str(raw.get("claim") or "")).strip()
         quote = re.sub(r"\s+", " ", str(raw.get("quote") or "")).strip()
-        key = (source_url, evidence_type, claim.casefold())
+        key = (
+            f"{(urlparse(source_url).hostname or '').casefold()}{urlparse(source_url).path.rstrip('/').casefold()}",
+            evidence_type,
+            claim.casefold(),
+        )
         if (
-            source_url not in citation_urls
+            not any(_same_public_page(source_url, cited_url) for cited_url in citation_urls)
             or evidence_type not in APPLICATION_RESEARCH_SCHEMA["properties"]["observations"]["items"]["properties"]["evidence_type"]["enum"]
             or source_relationship not in APPLICATION_RESEARCH_SCHEMA["properties"]["observations"]["items"]["properties"]["source_relationship"]["enum"]
             or not claim
             or not quote
+            or not _observation_matches_subject(raw, company_name, founder_name)
             or key in seen
         ):
             continue

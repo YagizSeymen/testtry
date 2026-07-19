@@ -54,9 +54,15 @@ class SourcingPipelineTest(unittest.TestCase):
             output_text=json.dumps(provider_result),
             output=[{"action": {"sources": [{"url": cited}]}}],
         )
+        captured_request = {}
+
+        def create_response(**kwargs):
+            captured_request.update(kwargs)
+            return response
+
         fake_openai = SimpleNamespace(
             OpenAI=lambda **_: SimpleNamespace(
-                responses=SimpleNamespace(create=lambda **__: response)
+                responses=SimpleNamespace(create=create_response)
             )
         )
         crawl_result = {
@@ -87,6 +93,10 @@ class SourcingPipelineTest(unittest.TestCase):
         self.assertEqual(result["observations"][0]["source_url"], cited)
         self.assertTrue(result["observations"][0]["crawl_verified"])
         self.assertEqual(result["limitations"], ["Cap table was not found."])
+        self.assertEqual(captured_request["tools"][0]["search_context_size"], "high")
+        request_payload = json.loads(captured_request["input"][1]["content"])
+        self.assertTrue(any("Claim check" in item for item in request_payload["required_investigations"]))
+        self.assertTrue(any("LinkedIn GitHub" in item for item in request_payload["required_investigations"]))
 
     def test_candidate_identity_deduplicates_search_qualifiers(self):
         first = {

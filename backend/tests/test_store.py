@@ -156,6 +156,37 @@ class StoreTests(unittest.TestCase):
             [],
         )
 
+    def test_memory_search_matches_fuzzy_company_and_application_context(self) -> None:
+        profile = {
+            "name": "Maya Chen",
+            "headline": "Technical founder",
+            "location": None,
+            "origin": "inbound",
+            "bio": "Founder introduced through an application.",
+        }
+        signals = [
+            {
+                "signal_id": "sig_maya",
+                "ts": "2026-07-19T00:00:00Z",
+                "source": "web",
+                "text": "Built a GPU scheduling platform for ML teams.",
+                "url": "https://neuralkit.example/product",
+            }
+        ]
+        empty_filter = {
+            "technical_founder": None,
+            "sectors": [],
+            "geos": [],
+            "shipped_within_days": None,
+            "prior_vc": None,
+        }
+
+        company = founder_search_match("NeuralKitt", empty_filter, profile, signals, ["NeuralKit"])
+        related_copy = founder_search_match("GPU scheduler", empty_filter, profile, signals, ["NeuralKit"])
+
+        self.assertIn("Company or application match", company)
+        self.assertTrue(related_copy)
+
     def test_postgres_adapter_translates_store_placeholders(self) -> None:
         class RecordingConnection:
             def __init__(self) -> None:
@@ -306,6 +337,104 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(profile["signals"]), 2)
         self.assertEqual(sum("ML platform engineer" in signal["text"] for signal in profile["signals"]), 1)
 
+    def test_cofounder_evidence_is_attributed_and_latest_batch_replaces_new_badge(self) -> None:
+        weave_result = {
+            "discovery": {
+                "evidence": [
+                    {
+                        "candidate_id": "cand_weave",
+                        "evidence_id": "ev_kaan",
+                        "signal_type": "technical_founder",
+                        "claim": "Kaan Dogrusoz led ML robotics research.",
+                        "source_url": "https://www.ycombinator.com/companies/weave-robotics",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                    {
+                        "candidate_id": "cand_weave",
+                        "evidence_id": "ev_evan_profile",
+                        "signal_type": "technical_founder",
+                        "claim": "Evan Wineland is a founder of Weave Robotics.",
+                        "source_url": "https://www.linkedin.com/in/ecwineland?trk=public",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                    {
+                        "candidate_id": "cand_weave",
+                        "evidence_id": "ev_product",
+                        "signal_type": "product_traction",
+                        "claim": "Weave Robotics deploys robots in customer homes.",
+                        "source_url": "https://weaverobotics.com/customers",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                    {
+                        "candidate_id": "cand_weave",
+                        "evidence_id": "ev_kaan_post",
+                        "signal_type": "execution",
+                        "claim": "Weave Robotics tested an early prototype in a real home.",
+                        "source_url": "https://www.linkedin.com/posts/kaan-dogrusoz-073b748a_prototype-activity-1",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                ]
+            },
+            "ranking": {
+                "ranked_candidates": [
+                    {
+                        "candidate_id": "cand_weave",
+                        "company_name": "Weave Robotics",
+                        "founder_names": ["Evan Wineland", "Kaan Dogrusoz"],
+                        "status": "candidate",
+                    }
+                ]
+            },
+        }
+        later_result = {
+            "discovery": {
+                "evidence": [
+                    {
+                        "candidate_id": "cand_later",
+                        "evidence_id": "ev_later",
+                        "signal_type": "execution",
+                        "claim": "Grace Hopper shipped Compiler Cloud.",
+                        "source_url": "https://example.com/compiler-cloud",
+                        "captured_at": "2026-07-19T01:00:00Z",
+                    }
+                ]
+            },
+            "ranking": {
+                "ranked_candidates": [
+                    {
+                        "candidate_id": "cand_later",
+                        "company_name": "Compiler Cloud",
+                        "founder_names": ["Grace Hopper"],
+                        "status": "candidate",
+                    }
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            store.ingest_live_discovery(weave_result, "scan_weave")
+            first_dashboard = store.dashboard()
+            evan_id = next(item["founder_id"] for item in first_dashboard if item["name"] == "Evan Wineland")
+            kaan_id = next(item["founder_id"] for item in first_dashboard if item["name"] == "Kaan Dogrusoz")
+            evan_text = " ".join(signal["text"] for signal in store.founder_profile(evan_id)["signals"])
+            kaan_text = " ".join(signal["text"] for signal in store.founder_profile(kaan_id)["signals"])
+
+            self.assertNotIn("Kaan Dogrusoz led", evan_text)
+            self.assertNotIn("early prototype", evan_text)
+            self.assertNotIn("Evan Wineland is", kaan_text)
+            self.assertIn("early prototype", kaan_text)
+            self.assertIn("customer homes", evan_text)
+            self.assertIn("customer homes", kaan_text)
+            self.assertTrue(next(item for item in first_dashboard if item["name"] == "Evan Wineland")["is_new"])
+            self.assertTrue(next(item for item in first_dashboard if item["name"] == "Kaan Dogrusoz")["is_new"])
+
+            store.ingest_live_discovery(later_result, "scan_later")
+            second_dashboard = store.dashboard()
+
+        self.assertFalse(next(item for item in second_dashboard if item["name"] == "Evan Wineland")["is_new"])
+        self.assertFalse(next(item for item in second_dashboard if item["name"] == "Kaan Dogrusoz")["is_new"])
+        self.assertTrue(next(item for item in second_dashboard if item["name"] == "Grace Hopper")["is_new"])
+
     def test_live_signal_cleanup_removes_existing_duplicate_records(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")
@@ -324,6 +453,43 @@ class StoreTests(unittest.TestCase):
 
         self.assertEqual(len(profile["signals"]), 1)
         self.assertIn("technical founder", profile["signals"][0]["text"])
+
+    def test_live_signal_cleanup_repairs_legacy_cofounder_cloning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            kaan_id = store.resolve_or_create_founder("Kaan Dogrusoz")
+            evan_id = store.resolve_or_create_founder("Evan Wineland")
+            with store.connection() as db:
+                for founder_id in (kaan_id, evan_id):
+                    db.execute(
+                        "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                        (
+                            f"sig_{founder_id}_kaan",
+                            founder_id,
+                            "2026-07-19T00:00:00Z",
+                            "hn",
+                            "Live technical founder: Kaan Dogrusoz led ML robotics research.",
+                            "https://www.ycombinator.com/companies/weave-robotics",
+                        ),
+                    )
+                    db.execute(
+                        "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                        (
+                            f"sig_{founder_id}_product",
+                            founder_id,
+                            "2026-07-19T00:00:00Z",
+                            "hn",
+                            "Live product traction: Weave Robotics tested robots in customer homes.",
+                            "https://www.ycombinator.com/companies/weave-robotics",
+                        ),
+                    )
+            store.deduplicate_live_signals()
+            evan_text = " ".join(signal["text"] for signal in store.founder_profile(evan_id)["signals"])
+            kaan_text = " ".join(signal["text"] for signal in store.founder_profile(kaan_id)["signals"])
+
+        self.assertNotIn("Kaan Dogrusoz led", evan_text)
+        self.assertIn("customer homes", evan_text)
+        self.assertIn("Kaan Dogrusoz led", kaan_text)
 
     def test_inbound_application_converges_on_cached_founder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
