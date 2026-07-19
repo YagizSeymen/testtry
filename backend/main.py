@@ -109,9 +109,18 @@ def _name_tokens(value: str) -> set[str]:
 
 
 def _mentions_person(value: str, person_name: str) -> bool:
-    person_tokens = _name_tokens(person_name)
+    ignored = {"dr", "mr", "mrs", "ms", "prof", "founder", "cofounder"}
+    ordered_person_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", person_name.casefold())
+        if len(token) > 1 and token not in ignored
+    ]
+    person_tokens = set(ordered_person_tokens)
     value_tokens = _name_tokens(value)
-    return bool(person_tokens) and person_tokens <= value_tokens
+    return bool(person_tokens) and (
+        person_tokens <= value_tokens
+        or (len(ordered_person_tokens) >= 2 and ordered_person_tokens[0] in value_tokens)
+    )
 
 
 def _personal_profile_url(value: str) -> bool:

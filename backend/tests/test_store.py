@@ -345,7 +345,7 @@ class StoreTests(unittest.TestCase):
                         "candidate_id": "cand_weave",
                         "evidence_id": "ev_kaan",
                         "signal_type": "technical_founder",
-                        "claim": "Kaan Dogrusoz led ML robotics research.",
+                        "claim": "Kaan led ML robotics research.",
                         "source_url": "https://www.ycombinator.com/companies/weave-robotics",
                         "captured_at": "2026-07-19T00:00:00Z",
                     },
@@ -419,7 +419,7 @@ class StoreTests(unittest.TestCase):
             evan_text = " ".join(signal["text"] for signal in store.founder_profile(evan_id)["signals"])
             kaan_text = " ".join(signal["text"] for signal in store.founder_profile(kaan_id)["signals"])
 
-            self.assertNotIn("Kaan Dogrusoz led", evan_text)
+            self.assertNotIn("Kaan led", evan_text)
             self.assertNotIn("early prototype", evan_text)
             self.assertNotIn("Evan Wineland is", kaan_text)
             self.assertIn("early prototype", kaan_text)
@@ -468,7 +468,7 @@ class StoreTests(unittest.TestCase):
                             founder_id,
                             "2026-07-19T00:00:00Z",
                             "hn",
-                            "Live technical founder: Kaan Dogrusoz led ML robotics research.",
+                            "Live technical founder: Kaan led ML robotics research.",
                             "https://www.ycombinator.com/companies/weave-robotics",
                         ),
                     )
@@ -487,9 +487,9 @@ class StoreTests(unittest.TestCase):
             evan_text = " ".join(signal["text"] for signal in store.founder_profile(evan_id)["signals"])
             kaan_text = " ".join(signal["text"] for signal in store.founder_profile(kaan_id)["signals"])
 
-        self.assertNotIn("Kaan Dogrusoz led", evan_text)
+        self.assertNotIn("Kaan led", evan_text)
         self.assertIn("customer homes", evan_text)
-        self.assertIn("Kaan Dogrusoz led", kaan_text)
+        self.assertIn("Kaan led", kaan_text)
 
     def test_inbound_application_converges_on_cached_founder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
