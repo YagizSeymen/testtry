@@ -9,6 +9,7 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,11 +22,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from .llm.wrapper import LLMWrapper
+ROOT = Path(__file__).resolve().parents[1]
+# Vercel imports this module as ``main`` when ``backend/`` is the service
+# root. Make the shared repository package importable in that execution mode.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+try:  # Package import locally; direct module import in the Vercel service.
+    from .llm.wrapper import LLMWrapper
+except ImportError:  # pragma: no cover - exercised by Vercel's entrypoint loader
+    from llm.wrapper import LLMWrapper
+
 from ai_service import sourcing_orchestration
 
 
-ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
 # A Render container mounts a persistent disk at /data. Vercel functions have
