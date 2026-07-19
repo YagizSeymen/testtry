@@ -32,7 +32,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(connection.execute("UPDATE thesis SET payload = ?", ("{}",)), "cursor")
         self.assertEqual(raw.calls, [("UPDATE thesis SET payload = %s", ("{}",))])
 
-    def test_live_discovery_promotes_only_qualified_candidates(self) -> None:
+    def test_live_discovery_promotes_review_leads_but_excludes_funded_candidates(self) -> None:
         live_result = {
             "discovery": {
                 "evidence": [
@@ -68,6 +68,14 @@ class StoreTests(unittest.TestCase):
                         "source_url": "https://example.com/funded-announcement",
                         "captured_at": "2026-07-19T00:00:00Z",
                     },
+                    {
+                        "candidate_id": "cand_unproven",
+                        "evidence_id": "ev_unproven_launch",
+                        "signal_type": "execution",
+                        "claim": "Unproven Founder shipped a public NLP demo.",
+                        "source_url": "https://example.com/unproven-launch",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
                 ]
             },
             "ranking": {
@@ -95,14 +103,14 @@ class StoreTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")
-            self.assertEqual(store.ingest_live_discovery(live_result), (1, 2))
+            self.assertEqual(store.ingest_live_discovery(live_result), (2, 3))
             dashboard = store.dashboard()
             profile = store.founder_profile(next(item["founder_id"] for item in dashboard if item["name"] == "Ada Live"))
 
         self.assertEqual(profile["profile"]["origin"], "github")
         self.assertEqual({signal["source"] for signal in profile["signals"]}, {"github", "web"})
         self.assertNotIn("Funded Founder", [item["name"] for item in dashboard])
-        self.assertNotIn("Unproven Founder", [item["name"] for item in dashboard])
+        self.assertIn("Unproven Founder", [item["name"] for item in dashboard])
 
     def test_live_discovery_deduplicates_one_source_claim_across_categories(self) -> None:
         live_result = {

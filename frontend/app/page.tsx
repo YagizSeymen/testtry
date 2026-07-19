@@ -72,7 +72,7 @@ type QueueItem = { application_id: string; company: string; recommendation: Reco
 type Thesis = { sectors: string[]; stage: string; geo: string[]; check_size: number; risk_appetite: string };
 type Metrics = { signal_to_decision_min: number | null; funnel: { sourced: number; screened: number; diligenced: number; decided: number } };
 type LatencySample = { label: string; ms: number; ok: boolean };
-type ScanRun = { new_founders: number; new_signals: number; cached: boolean };
+type ScanRun = { new_founders: number; new_signals: number; candidates_found: number; candidates_reviewed: number; cached: boolean };
 
 const DEMO_DECK = `Founder: Maya Chen
 NeuralKit has reached $50K in monthly recurring revenue.
@@ -274,7 +274,7 @@ export default function ProductPage() {
 
       <section className="workspace">
         <header className="topbar">
-          <div className="title-lockup"><p className="eyebrow">Single-fund workspace</p><h1>{view === "dashboard" ? "Founder discovery" : view === "founder" ? "Founder evidence" : view === "application" ? "Investment workbench" : "Human decision queue"}</h1><div className="workspace-status"><i /><span>{busy === "scan" ? "Web scan running" : scanRun ? scanRun.cached ? "Cache fallback retained" : `Live scan +${scanRun.new_signals} signals` : "Memory synchronized"}</span><span className="status-divider">/</span><span>Fund 01</span></div></div>
+          <div className="title-lockup"><p className="eyebrow">Single-fund workspace</p><h1>{view === "dashboard" ? "Founder discovery" : view === "founder" ? "Founder evidence" : view === "application" ? "Investment workbench" : "Human decision queue"}</h1><div className="workspace-status"><i /><span>{busy === "scan" ? "Web scan running" : scanRun ? scanRun.cached ? "Cache fallback retained" : `Live scan found ${scanRun.candidates_found} candidates` : "Memory synchronized"}</span><span className="status-divider">/</span><span>Fund 01</span></div></div>
           <div className="system-readout" aria-label="System readout"><span>FC.01</span><i /><span>MEM // LIVE</span></div>
           <div className="top-actions">
             <button className="icon-button" title="Run thesis-driven live web scan" onClick={() => void runScan()} disabled={busy === "scan"}>{busy === "scan" ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</button>
@@ -321,7 +321,7 @@ function DashboardView({ founders, metrics, search, setSearch, searchChips, isSe
         <Metric label="Signal to decision" value={metrics?.signal_to_decision_min ? `${metrics.signal_to_decision_min}m` : "-"} icon={<Flame size={17} />} color="amber" />
       </div>
       <div className="list-surface">
-        <div className="surface-head"><div><h2>Founder Memory</h2><p>{scanRun ? scanRun.cached ? "Live source unavailable; reviewed cache retained" : `${scanRun.new_signals} live signals retained from cited public pages` : `${founders.length} candidates with traceable signals`}</p></div><span className="source-badge"><Database size={14} />{scanRun?.cached ? "cache" : scanRun ? "web" : "memory"}</span></div>
+        <div className="surface-head"><div><h2>Founder Memory</h2><p>{scanRun ? scanRun.cached ? "Live source unavailable; reviewed cache retained" : `${scanRun.candidates_found} source-backed candidates reviewed; ${scanRun.new_signals} new signals retained` : `${founders.length} candidates with traceable signals`}</p></div><span className="source-badge"><Database size={14} />{scanRun?.cached ? "cache" : scanRun ? "web" : "memory"}</span></div>
         <form className="query-bar" onSubmit={onSearch}><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="technical founder, AI infra, shipped last 30 days, no prior VC" /><button className="icon-button compact" title="Run query" type="submit" disabled={isSearching}>{isSearching ? <LoaderCircle className="spin" size={17} /> : <ChevronRight size={18} />}</button></form>
         {searchChips.length > 0 && <div className="chip-row">{searchChips.map((chip) => <span className="filter-chip" key={chip}>{chip}</span>)}<button className="text-action" onClick={onClear}>Clear</button></div>}
         <div className="founder-table">

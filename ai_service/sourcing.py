@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import urlparse
 
@@ -204,7 +205,10 @@ def _deterministic_sourcing_plan(payload: dict[str, Any]) -> dict[str, Any]:
     geography = str(payload.get("geography") or "Europe").strip()
     sector = str(payload.get("sector") or "AI infrastructure").strip()
     max_candidates = max(1, min(50, int(payload.get("max_candidates") or 20)))
-    quoted = f'"{geography}" "{sector}"'
+    # Do not quote the geography: users commonly enter aliases such as "USA"
+    # while source pages say "United States" or only name a city. Quoting the
+    # sector is useful, but quoting both made live search needlessly brittle.
+    quoted = f'{geography} "{sector}"'
     queries = [
         _query("q_github", f"{quoted} startup founder site:github.com open source", "technical_founder"),
         _query("q_launches", f"{quoted} startup launch product customers pilot", "product_traction"),
@@ -261,11 +265,17 @@ def endpoint_sourcing_plan(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _candidate_id(candidate: dict[str, Any]) -> str:
-    return core.stable_id(
-        "candidate",
-        candidate.get("company_url") or candidate.get("company_name"),
-        ",".join(str(name) for name in candidate.get("founder_names", [])),
-    )
+    company_url = str(candidate.get("company_url") or "").strip()
+    if company_url:
+        parsed = urlparse(company_url)
+        identity = f"{parsed.netloc.casefold().removeprefix('www.')}{parsed.path.rstrip('/')}"
+    else:
+        # Web search may qualify the same company name with notes such as
+        # "(funding unclear)" in separate observations. Those observations
+        # must converge so funding evidence cannot be detached from the lead.
+        company_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(candidate.get("company_name") or ""))
+        identity = re.sub(r"[^a-z0-9]+", " ", company_name.casefold()).strip()
+    return core.stable_id("candidate", identity)
 
 
 def _normalise_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -471,7 +481,6 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
 
     prompt = {
         "thesis": plan["thesis"],
-        "queries": plan["queries"],
         "max_candidates": plan["max_candidates"],
         "output_contract": {
             "candidates": [
@@ -494,14 +503,28 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
     }
     developer = (
         "You are the bounded outbound-sourcing stage for a venture fund. Search the web to find "
-        "candidate founders and companies matching the thesis. Do not recommend investments or invent facts. "
-        "Do not return a company when you find public VC funding evidence for it; prefer companies for which the "
-        "searched public corpus has no disclosed funding evidence, while stating that this remains uncertain and "
-        "requires human confirmation. Return JSON only. Keep a candidate observation only when its source_url "
+        "distinct, very-early candidate founders and companies matching the thesis. Search across the supplied "
+        "GitHub, hackathon, research, accelerator, launch, customer, and funding queries instead of stopping after "
+        "the first familiar company. Prioritize independent builders, recent repositories, demos, product launches, "
+        "and newly formed startups. Return between four and the requested max_candidates when cited evidence permits. "
+        "Do not recommend investments or invent facts. Omit a company when positive public VC funding evidence is "
+        "found, but do not reject a lead merely because funding status is unknown; that uncertainty requires human "
+        "confirmation. Return JSON only. Keep a candidate observation only when its source_url "
         "matches a URL citation provided by web search. Report funding as public_vc_funding only when public evidence exists."
     )
-    try:
-        response = OpenAI(api_key=api_key, timeout=45.0, max_retries=0).responses.create(
+    # Two parallel branches improve breadth without serially consuming the
+    # serverless request budget. Each branch has an independent client so one
+    # transient search failure does not discard the other branch's citations.
+    queries = plan["queries"] if isinstance(plan.get("queries"), list) else []
+    query_groups = [queries[::2], queries[1::2]] if len(queries) > 1 else [queries]
+
+    def search_branch(branch_queries: list[dict[str, Any]]) -> tuple[dict[str, Any], set[str]]:
+        branch_prompt = {
+            **prompt,
+            "queries": branch_queries,
+            "max_candidates": max(2, (int(plan["max_candidates"]) + len(query_groups) - 1) // len(query_groups)),
+        }
+        response = OpenAI(api_key=api_key, timeout=38.0, max_retries=0).responses.create(
             model=LUNA_MODEL,
             reasoning={"effort": "none"},
             tools=[{"type": "web_search", "search_context_size": "medium"}],
@@ -516,26 +539,51 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
             },
             input=[
                 {"role": "developer", "content": developer},
-                {"role": "user", "content": json.dumps(prompt)},
+                {"role": "user", "content": json.dumps(branch_prompt)},
             ],
         )
-    except Exception as exc:
-        raise ModelProviderError(
-            f"OpenAI web discovery failed: {exc} [{exception_type_chain(exc)}]"
-        ) from exc
-    parsed = _parse_json_object(str(_attr(response, "output_text", "")))
-    citation_urls = _response_citation_urls(response)
+        parsed_branch = _parse_json_object(str(_attr(response, "output_text", "")))
+        citations = _response_citation_urls(response)
+        if not citations:
+            raise ModelProviderError("Web discovery branch returned no URL citations.")
+        return parsed_branch, citations
+
+    parsed_candidates: list[Any] = []
+    parsed_limitations: list[str] = []
+    citation_urls: set[str] = set()
+    branch_errors: list[BaseException] = []
+    with ThreadPoolExecutor(max_workers=len(query_groups)) as executor:
+        futures = [executor.submit(search_branch, group) for group in query_groups]
+        for future in as_completed(futures):
+            try:
+                parsed_branch, citations = future.result()
+            except Exception as exc:
+                branch_errors.append(exc)
+                continue
+            parsed_candidates.extend(parsed_branch.get("candidates", []))
+            parsed_limitations.extend(str(item) for item in parsed_branch.get("limitations", []) if item)
+            citation_urls.update(citations)
     if not citation_urls:
-        raise ModelProviderError("Web discovery returned no URL citations; candidate claims cannot be retained.")
+        error = branch_errors[0] if branch_errors else ModelProviderError("No live search branch completed.")
+        raise ModelProviderError(
+            f"OpenAI web discovery failed: {error} [{exception_type_chain(error)}]"
+        ) from error
 
     candidates: dict[str, dict[str, Any]] = {}
     sources: dict[str, dict[str, Any]] = {}
     evidence: dict[str, dict[str, Any]] = {}
-    for raw_candidate in parsed.get("candidates", []):
+    for raw_candidate in parsed_candidates:
         candidate = _normalise_candidate(raw_candidate if isinstance(raw_candidate, dict) else {})
         if candidate is None:
             continue
-        candidates[candidate["candidate_id"]] = candidate
+        existing = candidates.get(candidate["candidate_id"])
+        if existing is None:
+            candidates[candidate["candidate_id"]] = candidate
+        else:
+            founder_names = core.dedupe([*existing["founder_names"], *candidate["founder_names"]])
+            existing["founder_names"] = founder_names
+            existing["founder_refs"] = [memory.founder_reference(name) for name in founder_names]
+            candidate = existing
         for observation in raw_candidate.get("observations", []):
             if not isinstance(observation, dict):
                 continue
@@ -570,7 +618,7 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
         "thesis": plan["thesis"],
         "query_plan": plan["queries"],
         "required_signals": plan["required_signals"],
-        "candidates": [item for item in candidates.values() if item["evidence_ids"]],
+        "candidates": [item for item in candidates.values() if item["evidence_ids"]][: int(plan["max_candidates"])],
         "sources": list(sources.values()),
         "evidence": list(evidence.values()),
         "limitations": list(plan["limitations"]),
@@ -578,7 +626,8 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
     }
     result["limitations"] = [
         *result["limitations"],
-        *(str(item) for item in parsed.get("limitations", []) if item),
+        *parsed_limitations,
+        *("One live search branch failed; retained the other branch's cited results." for _ in branch_errors[:1]),
         "Live discovery retains only observations tied to returned web-search citations. Crawl retained source URLs before final diligence.",
     ]
     return result

@@ -22,6 +22,19 @@ Aster has signed five enterprise design partners and is running paid customer pi
 
 
 class SourcingPipelineTest(unittest.TestCase):
+    def test_candidate_identity_deduplicates_search_qualifiers(self):
+        first = {
+            "company_name": "Primer (funding unclear)",
+            "company_url": "https://www.primer.example/",
+            "founder_names": ["Ada Example"],
+        }
+        second = {
+            "company_name": "Primer (positive funding evidence exists)",
+            "company_url": "https://primer.example",
+            "founder_names": ["Grace Example"],
+        }
+        self.assertEqual(sourcing._candidate_id(first), sourcing._candidate_id(second))
+
     def test_web_search_sources_and_inline_citations_are_retained(self):
         response = {
             "output": [

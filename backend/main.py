@@ -408,8 +408,9 @@ class Store:
         """Promote source-backed, reviewable live leads into product Memory.
 
         The sourcing workflow has already ranked evidence coverage. This layer
-        deliberately keeps only leads without a public VC-funding exclusion,
-        stores at most twelve deduplicated signals per candidate, and never
+        keeps both fully covered candidates and source-backed leads that need
+        human review, while rejecting positive public VC-funding exclusions.
+        It stores at most twelve deduplicated signals per candidate and never
         treats an absence of funding evidence as proof of no funding.
         """
 
@@ -424,10 +425,11 @@ class Store:
         new_signals = 0
         with self.connection() as db:
             for candidate in ranking.get("ranked_candidates", []):
-                # The dashboard is an actionable candidate queue, not an
-                # exploratory lead list. Lower-coverage leads remain in the
-                # sourcing result for human research but are not promoted.
-                if not isinstance(candidate, dict) or candidate.get("status") != "candidate":
+                # Different user theses do not necessarily contain the
+                # challenge's original Europe + AI-infrastructure signal set.
+                # Preserve cited lower-coverage leads for human review; only a
+                # positive funding conflict is excluded from Memory.
+                if not isinstance(candidate, dict) or candidate.get("status") not in {"candidate", "needs_review"}:
                     continue
                 candidate_id = str(candidate.get("candidate_id") or "")
                 founder_names = [str(name).strip() for name in candidate.get("founder_names", []) if str(name).strip()]
@@ -946,11 +948,30 @@ def run_scan() -> dict[str, Any]:
     try:
         sourcing_result = sourcing_orchestration.run_sourcing_workflow(live_payload)
         founders, signals = store.ingest_live_discovery(sourcing_result)
-        return {"new_founders": founders, "new_signals": signals, "cached": False}
+        ranking = sourcing_result.get("ranking") if isinstance(sourcing_result.get("ranking"), dict) else {}
+        ranked = ranking.get("ranked_candidates") if isinstance(ranking.get("ranked_candidates"), list) else []
+        reviewable = sum(
+            1
+            for candidate in ranked
+            if isinstance(candidate, dict) and candidate.get("status") in {"candidate", "needs_review"}
+        )
+        return {
+            "new_founders": founders,
+            "new_signals": signals,
+            "candidates_found": reviewable,
+            "candidates_reviewed": len(ranked),
+            "cached": False,
+        }
     except Exception as exc:  # The reviewed cache keeps the demo usable offline or on provider failure.
         logger.warning("Live sourcing failed; falling back to reviewed cache: %s", exc)
         founders, signals = store.seed_cache()
-        return {"new_founders": founders, "new_signals": signals, "cached": True}
+        return {
+            "new_founders": founders,
+            "new_signals": signals,
+            "candidates_found": 0,
+            "candidates_reviewed": 0,
+            "cached": True,
+        }
 
 
 @app.get("/api/dashboard")
