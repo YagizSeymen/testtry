@@ -25,6 +25,10 @@ class StoreTests(unittest.TestCase):
         connection = PostgresConnection(raw)
 
         self.assertEqual(postgres_sql("SELECT * FROM founders WHERE founder_id = ?"), "SELECT * FROM founders WHERE founder_id = %s")
+        self.assertEqual(
+            postgres_sql("SELECT * FROM signals WHERE text LIKE 'Live %' AND founder_id = ?"),
+            "SELECT * FROM signals WHERE text LIKE 'Live %%' AND founder_id = %s",
+        )
         self.assertEqual(connection.execute("UPDATE thesis SET payload = ?", ("{}",)), "cursor")
         self.assertEqual(raw.calls, [("UPDATE thesis SET payload = %s", ("{}",))])
 

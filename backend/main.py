@@ -125,7 +125,10 @@ def parse_ts(value: str, fallback: datetime | None = None) -> datetime:
 def postgres_sql(statement: str) -> str:
     """Translate this module's DB-API SQLite placeholders for psycopg."""
 
-    return statement.replace("?", "%s")
+    # psycopg treats every percent sign in a parameterized query as part of its
+    # placeholder syntax. Escape SQL LIKE wildcards before translating the
+    # SQLite-style question-mark placeholders used throughout Store.
+    return statement.replace("%", "%%").replace("?", "%s")
 
 
 class PostgresConnection:
