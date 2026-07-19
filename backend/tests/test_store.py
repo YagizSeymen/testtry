@@ -8,10 +8,94 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from backend.main import PostgresConnection, Store, decision_brief, postgres_sql
+from backend.main import PostgresConnection, Store, decision_brief, founder_search_match, postgres_sql
 
 
 class StoreTests(unittest.TestCase):
+    def test_existing_application_founder_axis_is_recalibrated_from_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            created = store.create_application(
+                "Dummy Co",
+                "This is placeholder text with no founder evidence.",
+                {
+                    "founder_name": "Unknown founder",
+                    "claims": [
+                        {
+                            "claim_id": "clm_dummy",
+                            "type": "team",
+                            "text": "This is placeholder text with no founder evidence.",
+                            "source_span": "This is placeholder text with no founder evidence.",
+                        }
+                    ],
+                },
+            )
+            store.update_stage(
+                created["application_id"],
+                "axes_json",
+                {
+                    "founder": {"score": 10, "trend": "up", "rationale": "Old inflated score"},
+                    "market": {"rating": "neutral", "rationale": "Unknown"},
+                    "idea_vs_market": {"verdict": "fails", "rationale": "Unknown"},
+                },
+                "screen",
+                "Legacy screen",
+            )
+            application = store.application(created["application_id"])
+
+        self.assertEqual(application["axes"]["founder"]["score"], 2)
+        self.assertIn("0 independent Memory signals", application["axes"]["founder"]["rationale"])
+
+    def test_memory_search_supports_partial_technical_ai_and_name_queries(self) -> None:
+        profile = {
+            "name": "Ada Example",
+            "headline": "ML platform engineer",
+            "location": "Austin",
+            "origin": "github",
+            "bio": "Builds language-model evaluation tools.",
+        }
+        signals = [
+            {
+                "signal_id": "sig_ada",
+                "ts": "2026-07-19T00:00:00Z",
+                "source": "github",
+                "text": "Released an NLP model evaluation repository.",
+                "url": "https://github.com/example/ada",
+            }
+        ]
+
+        technical = founder_search_match(
+            "technical",
+            {"technical_founder": True, "sectors": [], "geos": [], "shipped_within_days": None, "prior_vc": None},
+            profile,
+            signals,
+        )
+        ai = founder_search_match(
+            "AI",
+            {"technical_founder": None, "sectors": ["AI"], "geos": [], "shipped_within_days": None, "prior_vc": None},
+            profile,
+            signals,
+        )
+        name = founder_search_match(
+            "Ada",
+            {"technical_founder": None, "sectors": [], "geos": [], "shipped_within_days": None, "prior_vc": None},
+            profile,
+            signals,
+        )
+
+        self.assertEqual(technical, ["Technical founder"])
+        self.assertEqual(ai, ["AI"])
+        self.assertEqual(name, ["Memory text match"])
+        self.assertEqual(
+            founder_search_match(
+                "quantum",
+                {"technical_founder": None, "sectors": [], "geos": [], "shipped_within_days": None, "prior_vc": None},
+                profile,
+                signals,
+            ),
+            [],
+        )
+
     def test_postgres_adapter_translates_store_placeholders(self) -> None:
         class RecordingConnection:
             def __init__(self) -> None:

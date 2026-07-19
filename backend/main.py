@@ -33,6 +33,7 @@ try:  # Package import locally; direct module import in the Vercel service.
 except ImportError:  # pragma: no cover - exercised by Vercel's entrypoint loader
     from llm.wrapper import LLMWrapper
 
+from ai_service import pipeline as product_pipeline
 from ai_service import sourcing_orchestration
 
 
@@ -767,6 +768,7 @@ class Store:
             for objection in adversarial.get("objections", []):
                 evidence_ids.update(objection.get("evidence") or [])
         with self.connection() as db:
+            founder_signals = self._signals(db, app["founder_id"])
             evidence = [
                 dict(row)
                 for row in db.execute(
@@ -774,6 +776,15 @@ class Store:
                     tuple(sorted(evidence_ids)),
                 ).fetchall()
             ] if evidence_ids else []
+        if isinstance(axes, dict):
+            founder_score = self.score(app["founder_id"])
+            axes = dict(axes)
+            axes["founder"] = product_pipeline.founder_axis_from_evidence(
+                float(founder_score["score"]),
+                int(founder_score["band"]),
+                str(founder_score["trend"]),
+                founder_signals,
+            )
         return {
             "application_id": app["application_id"],
             "founder_id": app["founder_id"],
@@ -907,6 +918,110 @@ def decision_brief(diligence: dict[str, Any], memo: dict[str, Any], adversarial:
     }
 
 
+SEARCH_TOKEN_GROUPS: dict[str, set[str]] = {
+    "ai": {"ai", "ml", "nlp", "llm", "model", "inference", "machine", "language"},
+    "technical": {"technical", "engineer", "engineering", "developer", "github", "code", "cto", "researcher"},
+    "infrastructure": {"infrastructure", "infra", "platform", "systems", "compute", "gpu", "serving", "observability"},
+}
+SEARCH_IGNORED_TOKENS = {
+    "a", "an", "and", "for", "founder", "founders", "in", "last", "no", "of", "or",
+    "prior", "the", "with", "within", "without", "days", "day", "vc", "funding",
+    "shipped", "recent", "recently", "technical",
+}
+
+
+def _search_tokens(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 1}
+
+
+def _semantic_token_match(token: str, corpus_tokens: set[str], corpus: str) -> bool:
+    if token in corpus_tokens or (len(token) >= 4 and token in corpus):
+        return True
+    for canonical, aliases in SEARCH_TOKEN_GROUPS.items():
+        if token == canonical or token in aliases:
+            return bool(aliases & corpus_tokens)
+    return False
+
+
+def founder_search_match(
+    query: str,
+    query_filter: dict[str, Any],
+    profile: dict[str, Any],
+    signals: list[dict[str, Any]],
+) -> list[str]:
+    """Return forgiving, explainable matches over persisted Founder Memory."""
+
+    corpus = " ".join(
+        [
+            str(profile.get("name") or ""),
+            str(profile.get("headline") or ""),
+            str(profile.get("location") or ""),
+            str(profile.get("origin") or ""),
+            str(profile.get("bio") or ""),
+            *(str(signal.get("text") or "") for signal in signals),
+        ]
+    ).casefold()
+    corpus_tokens = _search_tokens(corpus)
+    why: list[str] = []
+
+    if query_filter.get("technical_founder") is True:
+        if not (SEARCH_TOKEN_GROUPS["technical"] & corpus_tokens):
+            return []
+        why.append("Technical founder")
+
+    sectors = [str(item).strip() for item in query_filter.get("sectors", []) if str(item).strip()]
+    if sectors:
+        matched_sectors = [
+            sector
+            for sector in sectors
+            if any(_semantic_token_match(token, corpus_tokens, corpus) for token in _search_tokens(sector))
+        ]
+        if not matched_sectors:
+            return []
+        why.extend(matched_sectors)
+
+    geos = [str(item).strip() for item in query_filter.get("geos", []) if str(item).strip()]
+    if geos:
+        matched_geos = [geo for geo in geos if geo.casefold() in corpus]
+        if not matched_geos:
+            return []
+        why.extend(matched_geos)
+
+    shipped_within_days = query_filter.get("shipped_within_days")
+    if isinstance(shipped_within_days, int):
+        cutoff = datetime.now(timezone.utc) - timedelta(days=shipped_within_days)
+        if not any(
+            parse_ts(str(signal.get("ts") or now_iso())) >= cutoff
+            and any(word in str(signal.get("text") or "").casefold() for word in ("shipped", "released", "published", "launch", "deployed"))
+            for signal in signals
+        ):
+            return []
+        why.append("Recent product shipment")
+
+    positive_funding_terms = ("raised a", "seed round", "series a", "venture-backed", "backed by", "vc funding found")
+    prior_vc = query_filter.get("prior_vc")
+    has_positive_funding = any(term in corpus for term in positive_funding_terms)
+    if prior_vc is False:
+        if has_positive_funding:
+            return []
+        why.append("No prior VC disclosed")
+    elif prior_vc is True:
+        if not has_positive_funding:
+            return []
+        why.append("Prior VC signal")
+
+    # Preserve literal partial search for names, products, and arbitrary
+    # sectors that are not represented by a structured filter.
+    query_tokens = _search_tokens(query)
+    structured_tokens = set().union(*(_search_tokens(sector) for sector in sectors)) if sectors else set()
+    free_tokens = query_tokens - SEARCH_IGNORED_TOKENS - structured_tokens
+    if free_tokens and not any(_semantic_token_match(token, corpus_tokens, corpus) for token in free_tokens):
+        return []
+    if not why:
+        why.append("Memory text match")
+    return list(dict.fromkeys(why))
+
+
 store = Store()
 llm = LLMWrapper()
 app = FastAPI(title="VentureIntelligence API", version="1.0.0")
@@ -987,28 +1102,9 @@ def query_founders(payload: dict[str, Any]) -> dict[str, Any]:
     query_filter = llm.query(q, store.get_thesis())
     results = []
     for founder in store.dashboard():
-        profile = store.founder_profile(founder["founder_id"])["profile"]
-        signals = store.founder_profile(founder["founder_id"])["signals"]
-        corpus = " ".join([profile.get("headline") or "", profile.get("location") or "", *(signal["text"] for signal in signals)]).lower()
-        why = []
-        if query_filter["technical_founder"] and any(term in corpus for term in ("technical", "engineer", "github", "compiler", "systems")):
-            why.append("Technical founder")
-        if any(sector.lower() in corpus for sector in query_filter["sectors"]):
-            why.append(query_filter["sectors"][0])
-        europe_locations = ("berlin", "paris", "sofia", "london", "amsterdam", "munich", "zurich", "stockholm", "helsinki")
-        for geo in query_filter["geos"]:
-            geo_match = geo.lower() in corpus or (geo.casefold() == "europe" and any(location in corpus for location in europe_locations))
-            if geo_match:
-                why.append(geo)
-                break
-        if query_filter["shipped_within_days"] is not None:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=query_filter["shipped_within_days"])
-            if any(parse_ts(signal["ts"]) >= cutoff and any(word in signal["text"].lower() for word in ("shipped", "released", "published", "launch")) for signal in signals):
-                why.append("Recent product shipment")
-        if query_filter["prior_vc"] is False and not any("vc" in signal["text"].lower() or "funding" in signal["text"].lower() for signal in signals):
-            why.append("No prior VC disclosed")
-        requested = [query_filter["technical_founder"] is None or "Technical founder" in why, not query_filter["sectors"] or any(item in why for item in query_filter["sectors"]), not query_filter["geos"] or any(item in why for item in query_filter["geos"]), query_filter["shipped_within_days"] is None or "Recent product shipment" in why, query_filter["prior_vc"] is None or "No prior VC disclosed" in why]
-        if all(requested):
+        founder_record = store.founder_profile(founder["founder_id"])
+        why = founder_search_match(q, query_filter, founder_record["profile"], founder_record["signals"])
+        if why:
             results.append({"founder_id": founder["founder_id"], "why_matched": why})
     return {"filter": query_filter, "results": results}
 

@@ -186,7 +186,18 @@ def _normalise_extraction(raw: dict[str, Any], payload: dict[str, Any]) -> tuple
                 "source_span": span or None,
             }
         )
-    founder_name = _string(raw.get("founder_name")) or _fallback_founder_name(deck_text)
+    fallback_founder = _fallback_founder_name(deck_text)
+    model_founder = _string(raw.get("founder_name"))
+    normalised_deck = re.sub(r"[^a-z0-9]+", " ", deck_text.casefold()).strip()
+    normalised_founder = re.sub(r"[^a-z0-9]+", " ", model_founder.casefold()).strip()
+    # Identity may connect an inbound application to persistent Memory, so it
+    # cannot be accepted merely because the model returned a plausible name.
+    # Require the name itself to occur in the submitted text.
+    founder_name = (
+        model_founder
+        if normalised_founder and normalised_founder in normalised_deck
+        else fallback_founder
+    )
     return {"founder_name": founder_name, "claims": claims}, valid
 
 
@@ -218,9 +229,17 @@ def extract_application(payload: dict[str, Any]) -> dict[str, Any]:
 def _fallback_query(payload: dict[str, Any]) -> dict[str, Any]:
     query = _string(payload.get("q")).lower()
     thesis = payload.get("thesis") if isinstance(payload.get("thesis"), dict) else {}
-    sectors = [str(item) for item in thesis.get("sectors", []) if str(item).strip()]
+    query_tokens = _tokens(query)
+    sectors = []
+    for item in thesis.get("sectors", []):
+        sector = str(item).strip()
+        sector_tokens = _tokens(sector)
+        if sector and sector_tokens & query_tokens:
+            sectors.append(sector)
     if ("ai infra" in query or "ai infrastructure" in query) and not any("ai infrastructure" in item.lower() for item in sectors):
         sectors.append("AI infrastructure")
+    elif re.search(r"\b(ai|ml|nlp|llm)\b", query) and not sectors:
+        sectors.append("AI")
     geos = [str(item) for item in thesis.get("geo", []) if str(item).strip() and item.lower() in query]
     if "europe" in query and not any("europe" in item.lower() for item in geos):
         geos.append("Europe")
@@ -239,12 +258,25 @@ def parse_query(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("q and thesis are required.")
     raw = ModelRouter().run("query", payload, _fallback_query)
     fallback = _fallback_query(payload)
+    query_tokens = _tokens(_string(payload.get("q")))
+    raw_sectors = [_string(item) for item in raw.get("sectors", [])] if isinstance(raw.get("sectors"), list) else []
+    # A model may copy the active thesis sector even for a one-word query such
+    # as "technical". Only retain inferred sectors that overlap the user's
+    # actual query; otherwise the hidden sector facet causes false zero hits.
+    explicit_raw_sectors = [
+        sector for sector in raw_sectors if _tokens(sector) & query_tokens
+    ]
+    raw_geos = [_string(item) for item in raw.get("geos", [])] if isinstance(raw.get("geos"), list) else []
+    explicit_raw_geos = [geo for geo in raw_geos if _tokens(geo) & query_tokens]
+    query_text = _string(payload.get("q")).casefold()
+    asks_recency = any(term in query_text for term in ("recent", "shipped", "released", "last ", "within "))
+    asks_funding = any(term in query_text for term in ("vc", "venture", "funded", "funding", "raised"))
     return {
-        "technical_founder": raw.get("technical_founder") if isinstance(raw.get("technical_founder"), bool) else fallback["technical_founder"],
-        "sectors": _dedupe([_string(item) for item in raw.get("sectors", [])]) if isinstance(raw.get("sectors"), list) else fallback["sectors"],
-        "geos": _dedupe([_string(item) for item in raw.get("geos", [])]) if isinstance(raw.get("geos"), list) else fallback["geos"],
-        "shipped_within_days": raw.get("shipped_within_days") if isinstance(raw.get("shipped_within_days"), int) and raw["shipped_within_days"] >= 0 else fallback["shipped_within_days"],
-        "prior_vc": raw.get("prior_vc") if isinstance(raw.get("prior_vc"), bool) else fallback["prior_vc"],
+        "technical_founder": fallback["technical_founder"] if fallback["technical_founder"] is not None else raw.get("technical_founder") if isinstance(raw.get("technical_founder"), bool) else None,
+        "sectors": _dedupe([*fallback["sectors"], *explicit_raw_sectors]),
+        "geos": _dedupe([*fallback["geos"], *explicit_raw_geos]),
+        "shipped_within_days": raw.get("shipped_within_days") if asks_recency and isinstance(raw.get("shipped_within_days"), int) and raw["shipped_within_days"] >= 0 else fallback["shipped_within_days"],
+        "prior_vc": fallback["prior_vc"] if fallback["prior_vc"] is not None else raw.get("prior_vc") if asks_funding and isinstance(raw.get("prior_vc"), bool) else None,
     }
 
 
@@ -279,6 +311,35 @@ def _supports(claim: dict[str, Any], signal: dict[str, Any]) -> bool:
     return False
 
 
+def founder_axis_from_evidence(
+    founder_score: float,
+    band: int,
+    trend: str,
+    signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Calculate the model-independent founder axis from persisted evidence."""
+
+    unique_signals = {
+        _string(item.get("signal_id"))
+        for item in signals
+        if _string(item.get("signal_id")) and _string(item.get("text"))
+    }
+    source_diversity = len({_string(item.get("source")).casefold() for item in signals if _string(item.get("source"))})
+    score = max(2, min(10, int(round(2 + max(0.0, founder_score - 35.0) * 8 / 65))))
+    evidence_cap = 2 if not unique_signals else min(10, 3 + source_diversity + min(3, len(unique_signals) // 2))
+    score = min(score, evidence_cap)
+    safe_trend = trend if trend in TRENDS else "flat"
+    return {
+        "score": score,
+        "trend": safe_trend,
+        "rationale": (
+            f"Evidence-based Founder axis: {len(unique_signals)} independent Memory signals across "
+            f"{source_diversity} source types; persisted score {founder_score:.0f} with a "
+            f"{band} point uncertainty band. Submitted deck wording does not increase this axis."
+        ),
+    }
+
+
 def _fallback_screen(payload: dict[str, Any]) -> dict[str, Any]:
     claims = _records(payload.get("claims"))
     signals = _records(payload.get("signals"))
@@ -293,17 +354,20 @@ def _fallback_screen(payload: dict[str, Any]) -> dict[str, Any]:
     thesis_matches = len(thesis_terms & corpus_terms)
     product_present = any(item.get("type") == "product" for item in claims)
     market_present = any(item.get("type") == "market" for item in claims)
-    founder_axis = max(0, min(10, int(round(4 + founder_score / 20))))
+    # A cold-start founder with no independent Memory evidence must remain low
+    # confidence. The model is not allowed to modify this calculation.
+    founder_axis = founder_axis_from_evidence(
+        founder_score,
+        int(payload.get("band") or 30),
+        trend,
+        signals,
+    )
     market_rating = "bullish" if thesis_matches >= 1 and market_present else "neutral"
     if thesis_terms and not thesis_matches:
         market_rating = "bear"
     idea_verdict = "survives" if product_present and market_present else "pivot" if product_present else "fails"
     return {
-        "founder": {
-            "score": founder_axis,
-            "trend": trend,
-            "rationale": f"Founder Score is {founder_score:.0f} with a {int(payload.get('band') or 30)} point uncertainty band; the trend is deterministic.",
-        },
+        "founder": founder_axis,
         "market": {
             "rating": market_rating,
             "rationale": "The thesis and supplied market evidence overlap." if market_rating == "bullish" else "Current Memory gives limited thesis-specific market evidence.",
@@ -321,15 +385,14 @@ def _normalise_axes(raw: dict[str, Any], payload: dict[str, Any]) -> dict[str, A
     founder = raw.get("founder") if isinstance(raw.get("founder"), dict) else {}
     market = raw.get("market") if isinstance(raw.get("market"), dict) else {}
     idea = raw.get("idea_vs_market") if isinstance(raw.get("idea_vs_market"), dict) else {}
-    score = founder.get("score")
-    if not isinstance(score, (int, float)):
-        score = fallback["founder"]["score"]
     trend = _string(payload.get("trend"), "flat")
     return {
         "founder": {
-            "score": max(0, min(10, score)),
+            # The model may explain the other qualitative axes, but it cannot
+            # override the backend-owned evidence score.
+            "score": fallback["founder"]["score"],
             "trend": trend if trend in TRENDS else "flat",
-            "rationale": _string(founder.get("rationale")) or fallback["founder"]["rationale"],
+            "rationale": fallback["founder"]["rationale"],
         },
         "market": {
             "rating": _string(market.get("rating")) if _string(market.get("rating")) in MARKET_RATINGS else fallback["market"]["rating"],

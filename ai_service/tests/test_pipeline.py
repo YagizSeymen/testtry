@@ -60,6 +60,65 @@ class ProductPipelineTest(unittest.TestCase):
         self.assertTrue(result["claims"])
         self.assertTrue(all(claim["source_span"] in DECK for claim in result["claims"]))
 
+    def test_model_cannot_invent_founder_identity_or_ten_out_of_ten_score(self):
+        dummy_deck = "This is placeholder text with no founder evidence."
+        model_extract = {
+            "founder_name": "Maya Chen",
+            "claims": [
+                {
+                    "claim_id": "clm_dummy",
+                    "type": "team",
+                    "text": dummy_deck,
+                    "source_span": dummy_deck,
+                }
+            ],
+        }
+        with patch.object(pipeline.ModelRouter, "run", return_value=model_extract):
+            extracted = pipeline.extract_application({"company_name": "Dummy", "deck_text": dummy_deck})
+        self.assertEqual(extracted["founder_name"], "Unknown founder")
+
+        model_axes = {
+            "founder": {"score": 10, "trend": "up", "rationale": "The dummy text is excellent."},
+            "market": {"rating": "bullish", "rationale": "Model view"},
+            "idea_vs_market": {"verdict": "survives", "rationale": "Model view"},
+        }
+        with patch.object(pipeline.ModelRouter, "run", return_value=model_axes):
+            axes = pipeline.screen_application(
+                {
+                    "company_name": "Dummy",
+                    "claims": extracted["claims"],
+                    "signals": [],
+                    "founder_score": 35,
+                    "band": 30,
+                    "trend": "flat",
+                    "thesis": THESIS,
+                }
+            )
+        self.assertEqual(axes["founder"]["score"], 2)
+        self.assertIn("0 independent Memory signals", axes["founder"]["rationale"])
+
+    def test_short_query_does_not_inherit_hidden_thesis_sector(self):
+        with patch.object(
+            pipeline.ModelRouter,
+            "run",
+            return_value={
+                "technical_founder": True,
+                "sectors": ["AI infrastructure"],
+                "geos": ["Europe"],
+                "shipped_within_days": 30,
+                "prior_vc": False,
+            },
+        ):
+            parsed = pipeline.parse_query({"q": "technical", "thesis": THESIS})
+        self.assertTrue(parsed["technical_founder"])
+        self.assertEqual(parsed["sectors"], [])
+        self.assertEqual(parsed["geos"], [])
+        self.assertIsNone(parsed["shipped_within_days"])
+        self.assertIsNone(parsed["prior_vc"])
+
+        parsed_ai = pipeline._fallback_query({"q": "AI", "thesis": {**THESIS, "sectors": ["NLP"]}})
+        self.assertEqual(parsed_ai["sectors"], ["AI"])
+
     def test_diligence_and_memo_enforce_evidence_gates(self):
         extracted = pipeline.extract_application({"company_name": "NeuralKit", "deck_text": DECK})
         diligence = pipeline.diligence_claims({"claims": extracted["claims"], "signals": SIGNALS})
