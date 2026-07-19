@@ -188,8 +188,25 @@ Adversary endpoint invariants:
   been generated, retries return the persisted result and never ask the
   adversary to speak again.
 
+Stage prerequisite invariants (public human `status` is unchanged;
+pipeline readiness remains nullable stage objects on the aggregate GET):
+- POST .../screen requires extracted claims.
+- POST .../diligence requires axes from screen.
+- POST .../memo requires diligence.
+- POST .../adversary requires memo (else 409).
+- POST /api/decisions/{id}/decide requires memo_ready (decision-ready).
+- Internally track: created → extracted → screened → diligenced →
+  memo_ready → adversary_ready (P1) → pending_human_decision →
+  approved | rejected. Do not invent a new public status enum.
+
 ## 4. PIPELINE (boxes left to right)
 SOURCES (reviewed cache, synthetic web, deck upload; GitHub/HN live is bonus)
+  Cache and live MUST share the same ingestion path:
+    raw source records → normalize → identity dedup → signals → Memory →
+    Founder Score → dashboard. Never seed the dashboard with precomputed
+    score cards alone. scan_cache.json stores source-like records
+    (source, urls, display_name, fetched_at, cached, raw payloads), not
+    finished founder_score rows. Label UI/audit honestly when cached.
  -> INGEST/NORMALIZE  deterministic founder identity is person-based.
     normalized(name) = lowercase(name), then remove every space and punctuation
     character. Two records are the same founder if and only if their normalized
@@ -281,12 +298,23 @@ SIDE: FOUNDER SCORE   deterministic and persisted across applications.
       trend = up if delta >= 3; down if delta <= -3; otherwise flat
     With no previous snapshot, trend is flat. Golden tests use fixture snapshot
     timestamps, never wall-clock time.
+    Cold-start (thin footprint / no GitHub): score from whatever signals exist;
+    wide band is expected. UI must explain uncertainty and list "what would
+    tighten this" (more dated shipping signals, second source type, verified
+    traction). Do not treat missing prestige as a negative founder fact.
+    Keep confidence concepts separate: span validity, claim trust, founder
+    score±band, and screening rationale are different questions.
 
 SIDE: THESIS          one server-side store for one fund. Dashboard, query, and
       screen read it directly; clients do not resend thesis state.
 
 SIDE: QUERY           LLM#5: NL -> QueryFilter -> deterministic search through
       the stored thesis lens
+
+SIDE: AI ADAPTER      Lane 1 routes call a narrow IntelligenceService adapter
+      (extract, screen, diligence, memo, adversary). Do not import LangGraph
+      nodes from route handlers. Deterministic score/trust/brief stay in Lane 1
+      code. Fixture or deterministic AI fallback when OPENAI_API_KEY is absent.
 
 ## 5. DATA
 - thesis_presets.json: sectors, stage, geo, check size, risk appetite
@@ -304,6 +332,8 @@ SIDE: QUERY           LLM#5: NL -> QueryFilter -> deterministic search through
   Frontend mocks import these files instead of retyping contract examples.
 - backend/fetchers/scan_cache.json: generated and owned by the fetcher lane.
   Yuning reviews the names before the cache reaches the dashboard.
+  Records are source-shaped (provenance + raw fields + fetched_at + cached),
+  then ingested through the same normalize/dedup/score path as live scan.
 
 Generated artifacts live in the generator's lane. `/data` contains only
 hand-written seeds, golden cases, and canonical fixtures.
@@ -311,10 +341,12 @@ hand-written seeds, golden cases, and canonical fixtures.
 ## 6. TASKS AND OWNERSHIP
 lane 1: `/backend` except the two lane 2 subfolders; sqlite schema + Memory,
   ingest/dedup, Founder Score + persistence, orchestration endpoints, decision
-  gate, audit + metrics, deterministic Decision Brief builder
+  gate, audit + metrics, deterministic Decision Brief builder; narrow AI
+  adapter interface used by route handlers
 lane 2: `/backend/llm` + `/backend/fetchers`; fetchers + cache, LLM wrapper,
   calls #1-#5, then adversary (#6) + one batched judge verification. Lane 2
-  exposes importable functions; lane 1 owns endpoint wiring.
+  exposes importable functions; lane 1 owns endpoint wiring. Existing
+  `ai_service/` may fulfill lane 2 until moved under those folders.
 lane 3: `/frontend`; 4 screens, mock-first from `/data/fixtures`: Dashboard
   (+query bar), Founder profile, Application flow tabs, Decision queue (+audit
   drawer); overnight adds Devil's Advocate + Decision Brief cards only when
@@ -324,8 +356,12 @@ Yuning: `/prompts`, `/data`, `/eval`, and docs; prompts v1, seeds, fixtures,
 
 ## 7. 20-HOUR BUILD ORDER
 1. Freeze this contract and load canonical fixtures in the frontend.
-2. Complete the cached, seeded vertical slice through human decision + audit.
-3. Verify the clean, contradiction, and cold-start golden paths.
-4. Add the live scan button only after cache fallback is proven.
-5. Add adversary -> batched verify -> deterministic brief as P1.
-6. Add the prompt-injection deck only after the rest of the demo is stable.
+2. Complete ONE vertical golden path before polishing every route:
+   seed -> dashboard -> application -> extract -> screen -> diligence ->
+   memo -> decide -> audit (offline).
+3. Verify the clean, contradiction, and cold-start golden paths (wide band +
+   "what would tighten this"; cache shown as ingested sources, not cards).
+4. Add NL query and activation draft; prove cache ingestion/dedup provenance.
+5. Add the live scan button only after cache fallback is proven.
+6. Add adversary -> batched verify -> deterministic brief as P1 (do not block P0).
+7. Add the prompt-injection deck only after the rest of the demo is stable.

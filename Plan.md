@@ -32,6 +32,7 @@ One-liner (from `steps.md`): live-sourced founders + inbound decks → one Memor
 10. [Non-goals](#10-non-goals)
 11. [Build status and next steps](#11-build-status-and-next-steps)
 12. [Team pointers](#12-team-pointers)
+13. [Engineering hard rules (external review)](#13-engineering-hard-rules-external-review)
 
 ---
 
@@ -67,6 +68,22 @@ Challenge pipeline covered: **Sourcing → Screening → Diligence → Decision*
 Strong founders are often missed because their work is fragmented across GitHub, Hacker News, hackathons, papers, websites, pitch decks, launches, and social profiles. Traditional sourcing favors networks, prior funding, and visibility.
 
 VentureIntelligence identifies promising founders from **observable execution evidence**, even when they have no prior VC, network, accelerator, visibility, or exit. Cold-start is a first-class demo path (wide Founder Score band + “what would tighten this”), not an afterthought.
+
+**Cold-start scoring must be explicit** — what replaces prestige:
+
+- repeated shipping and project completion;
+- technical complexity and evidence of iteration;
+- hackathon or research activity;
+- consistency over time and problem ownership;
+- public product signals and submitted work quality.
+
+UI should show why the band is wide, e.g.:
+
+```text
+Founder Score: 59 ± 22
+Reason for uncertainty: Limited historical evidence; no previous company outcomes.
+What would tighten this: more dated shipping signals, second source type, verified traction.
+```
 
 ### Product story (build order)
 
@@ -298,7 +315,7 @@ Details and invariants live in [`steps.md`](steps.md). Summary only here.
 
 | Source | Role |
 |--------|------|
-| Reviewed scan cache | Primary outbound seed for dashboard (demo-safe) |
+| Reviewed scan cache | Primary outbound seed for dashboard (demo-safe). Source-shaped records only; same ingest path as live. See §13.1 |
 | Synthetic signals | Hand-written evidence; UI must show `source: "synthetic"` |
 | Deck `.txt` uploads | Inbound claims; treat as untrusted data, never as instructions |
 | Live GitHub + HN | **Bonus** after cache fallback proven |
@@ -465,9 +482,31 @@ Also out of challenge MVP: treating the North Star “fund that runs itself” a
 
 ### Source of truth for implementation
 
-Proceed against **[`steps.md`](steps.md)** — especially §3 API, §4 pipeline, §5 data, §6 lanes, §7 20-hour order.
+Proceed against **[`steps.md`](steps.md)** — especially §3 API, §4 pipeline, §5 data, §6 lanes, §7 20-hour order. Do **not** redesign the architecture again unless implementation reveals a concrete bug.
 
-### Suggested 20-hour order (from `steps.md`)
+External review verdict: **GO to build** — sound and challenge-aligned. Gaps below are implementation hardening, not a new product design.
+
+### Vertical golden path first (do this before polishing every route)
+
+```text
+seed founder → dashboard → submit application → extract → screen
+→ diligence → memo → decide → audit
+```
+
+Then add: NL query → activation draft → cache ingestion proof → cold-start case → adversary → Decision Brief → live scan bonus → injection deck.
+
+### Next 4–6 hours (recommended)
+
+| Hours | Focus |
+|-------|--------|
+| 0–1 | Freeze domain models + internal stage prerequisites; validate fixtures against schemas |
+| 1–2 | Backend skeleton + seed; `thesis`, `dashboard`, `founders/{id}`, `POST/GET applications` |
+| 2–3 | AI adapter + `screen` / `diligence` / `memo` (fixture fallback if no API key) |
+| 3–4 | Decision queue, decide, audit, metrics (`signal_to_decision_min`) |
+| 4–5 | Frontend vertical slice only (4 screens for golden path) |
+| 5–6 | Harden NeuralKit demo: contradicted MRR, cap-table gap, offline, Version A nulls |
+
+### Suggested longer order (from `steps.md` + review)
 
 1. Freeze the contract; load canonical fixtures in the frontend.
 2. Complete the cached, seeded vertical slice through human decision + audit.
@@ -483,6 +522,7 @@ Proceed against **[`steps.md`](steps.md)** — especially §3 API, §4 pipeline,
 - Counter-case is bounded; Decision Brief does not decide.
 - Human remains the only authority on the $100K check.
 - `signal_to_decision_min` is visible for utility scoring.
+- Cache is visibly ingested (not a hardcoded dashboard card list).
 
 ---
 
@@ -498,10 +538,124 @@ Proceed against **[`steps.md`](steps.md)** — especially §3 API, §4 pipeline,
 
 ### Lane ownership (from `steps.md`)
 
-- **Lane 1 — Backend:** sqlite Memory, ingest/dedup, Founder Score, orchestration endpoints, decision gate, audit/metrics, Decision Brief builder
-- **Lane 2 — LLM + fetchers:** fetchers/cache, LLM wrapper, calls #1–#5, then adversary (#6) + batched verify
-- **Lane 3 — Frontend:** 4 screens, mock-first from `/data/fixtures`
+- **Lane 1 — Backend:** sqlite Memory, ingest/dedup, Founder Score, orchestration endpoints, decision gate, audit/metrics, Decision Brief builder; public `/api`; narrow `IntelligenceService` adapter around AI
+- **Lane 2 — LLM + fetchers:** fetchers/cache (source-shaped `scan_cache.json`), LLM wrapper, calls #1–#5, then adversary (#6) + batched verify
+- **Lane 3 — Frontend:** 4 screens, mock-first from `/data/fixtures`; never knows model/prompt internals
 - **Docs / seeds / eval:** prompts, golden set, fixtures, video, README
+
+---
+
+## 13. Engineering hard rules (external review)
+
+Locked for implementation. Public API shapes in `steps.md` §3 stay frozen; these rules govern **how** we build.
+
+### 13.1 Cache-first sourcing must show real ingestion
+
+Judges must not see a hardcoded founder list. Same pipeline for cached and live:
+
+```text
+raw cached source records
+→ source normalization
+→ identity deduplication
+→ evidence / signals
+→ founder Memory
+→ Founder Score
+→ dashboard
+```
+
+Store cache as **source-like** records (not precomputed dashboard cards).
+
+Weak (do not ship as the cache):
+
+```json
+{ "name": "Jane Doe", "founder_score": 82 }
+```
+
+Better (fetcher-owned `backend/fetchers/scan_cache.json`):
+
+```json
+{
+  "source": "github",
+  "profile_url": "https://github.com/janedoe",
+  "username": "janedoe",
+  "display_name": "Jane Doe",
+  "repositories": [],
+  "fetched_at": "2026-07-18T12:00:00Z",
+  "cached": true
+}
+```
+
+Label provenance honestly in UI / audit:
+
+```text
+Source mode: reviewed cache
+Originally collected from: GitHub
+Retrieved at: ...
+Cache fallback: true
+```
+
+Judge-facing message: *“Demo runs offline for reliability; cached and live signals use the same source schema and ingestion pipeline.”*
+
+Stronger demos (pick ≥1): live scan with cache fallback; refresh one founder; provenance panel (source, timestamp, cache flag, derived claims).
+
+### 13.2 Application stage prerequisites (internal)
+
+Public human `status` remains only `open | approved | rejected`. Pipeline readiness stays **nullable stage objects** on `GET /api/applications/{id}`. Internally, endpoints validate prerequisites:
+
+```text
+created → extracted → screened → diligenced → memo_ready
+  → adversary_ready (P1) → pending_human_decision → approved | rejected
+```
+
+| Endpoint | Requires |
+|----------|----------|
+| `POST .../screen` | extracted claims |
+| `POST .../diligence` | screening (`axes`) |
+| `POST .../memo` | diligence |
+| `POST .../adversary` | memo (else HTTP 409) |
+| `POST /api/decisions/{id}/decide` | memo ready (decision-ready) |
+
+### 13.3 Code-owned vs LLM-owned
+
+**Code (never LLM):** Founder Score + band; trust badge mapping; Decision Brief severity; source-span guard; memo `based_on` guards; pipeline state; human decision; metrics.
+
+**LLM:** extraction; 3-axis assessment; claim validation reasoning; memo prose; adversarial objections; schema-valid structured JSON.
+
+### 13.4 Three different “confidence” ideas (do not merge)
+
+Do not use one vague “confidence” everywhere. Keep concepts separate (even if some stay internal / UI-only until additive contract approval):
+
+| Concept | Question |
+|---------|----------|
+| Extraction / span validity | Was the claim extracted correctly (`source_span` exact)? |
+| Claim trust (`high`/`med`/`low`) | Is the claim supported by Memory evidence? |
+| Founder Score interval (`score ± band`) | How uncertain is the person-level estimate? |
+| Screening rationale | How certain is the per-axis assessment? (qualitative in `rationale`) |
+
+### 13.5 Backend AI adapter
+
+Routes must not import LangGraph nodes directly. Use a narrow adapter:
+
+```python
+class IntelligenceService:
+    async def extract(...): ...
+    async def screen(...): ...
+    async def diligence(...): ...
+    async def generate_memo(...): ...
+    async def generate_adversary(...): ...
+```
+
+LangGraph is fine if already implemented; do not spend demo time showcasing it. A plain Python stage chain is enough if LangGraph friction appears.
+
+### 13.6 Over-scope guards
+
+- Do not fully implement every route before the golden vertical path works.
+- Adversary + Decision Brief stay **P1** — do not block P0 MVP.
+- Do not redesign architecture unless implementation forces a concrete fix.
+
+### 13.7 What professors / judges should see
+
+Clear schemas; real provenance; deterministic safeguards; cold-start reasoning; measurable evaluation (`signal_to_decision_min`); failure handling; honest uncertainty; documented technical ownership. **Not** more agents.
 
 ---
 
