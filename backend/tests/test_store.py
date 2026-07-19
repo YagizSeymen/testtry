@@ -13,6 +13,37 @@ from backend.main import PostgresConnection, Store, decision_brief, founder_memo
 
 
 class StoreTests(unittest.TestCase):
+    def test_signal_diversity_metrics_use_normalized_stored_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            with store.connection() as db:
+                founder_id = db.execute("SELECT founder_id FROM founders ORDER BY founder_id LIMIT 1").fetchone()["founder_id"]
+                db.execute(
+                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                    ("sig_diversity_upper", founder_id, "2026-07-19T00:00:00Z", " GitHub ", "Upper source", None),
+                )
+                db.execute(
+                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                    ("sig_diversity_lower", founder_id, "2026-07-19T00:00:01Z", "github", "Lower source", None),
+                )
+                expected_rows = db.execute(
+                    """
+                    SELECT LOWER(TRIM(source)) AS source, COUNT(*) AS count
+                    FROM signals
+                    WHERE TRIM(source) != ''
+                    GROUP BY LOWER(TRIM(source))
+                    ORDER BY count DESC, source ASC
+                    """
+                ).fetchall()
+            metrics = store.metrics()
+
+        expected = [{"source": row["source"], "count": row["count"]} for row in expected_rows]
+        self.assertEqual(metrics["signal_diversity"]["sources"], expected)
+        self.assertEqual(metrics["signal_diversity"]["distinct_sources"], len(expected))
+        self.assertEqual(metrics["signal_diversity"]["total_signals"], sum(item["count"] for item in expected))
+        github = next(item for item in expected if item["source"] == "github")
+        self.assertGreaterEqual(github["count"], 2)
+
     def test_chat_id_remains_optional_for_existing_api_clients(self) -> None:
         with patch("backend.main.store.sync_rag_chunks", return_value=[]):
             response = founder_memory_chat({"message": "What evidence exists?", "history": []})
@@ -246,9 +277,20 @@ class StoreTests(unittest.TestCase):
                 self.calls.append((statement, parameters))
                 return "cursor"
 
-            def executemany(self, statement: str, parameters: list[tuple[object, ...]]) -> str:
-                self.calls.extend((statement, item) for item in parameters)
-                return "cursor"
+            def cursor(self):
+                connection = self
+
+                class RecordingCursor:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *_args: object) -> None:
+                        return None
+
+                    def executemany(self, statement: str, parameters: list[tuple[object, ...]]) -> None:
+                        connection.calls.extend((statement, item) for item in parameters)
+
+                return RecordingCursor()
 
         raw = RecordingConnection()
         connection = PostgresConnection(raw)
@@ -259,10 +301,7 @@ class StoreTests(unittest.TestCase):
             "SELECT * FROM signals WHERE text LIKE 'Live %%' AND founder_id = %s",
         )
         self.assertEqual(connection.execute("UPDATE thesis SET payload = ?", ("{}",)), "cursor")
-        self.assertEqual(
-            connection.executemany("UPDATE rag_chunks SET embedding_json = ? WHERE chunk_id = ?", [("[]", "rag_1")]),
-            "cursor",
-        )
+        connection.executemany("UPDATE rag_chunks SET embedding_json = ? WHERE chunk_id = ?", [("[]", "rag_1")])
         self.assertEqual(
             raw.calls,
             [

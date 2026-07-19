@@ -249,8 +249,11 @@ class PostgresConnection:
     def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
         return self.raw.execute(postgres_sql(statement), parameters)
 
-    def executemany(self, statement: str, parameters: list[tuple[Any, ...]]) -> Any:
-        return self.raw.executemany(postgres_sql(statement), parameters)
+    def executemany(self, statement: str, parameters: list[tuple[Any, ...]]) -> None:
+        # psycopg exposes batch execution on cursors, not Connection. Keep the
+        # adapter aligned with sqlite3.Connection.executemany used locally.
+        with self.raw.cursor() as cursor:
+            cursor.executemany(postgres_sql(statement), parameters)
 
     def commit(self) -> None:
         self.raw.commit()
@@ -1357,10 +1360,28 @@ class Store:
                 GROUP BY app.application_id
                 """
             ).fetchall()
+            source_rows = db.execute(
+                """
+                SELECT LOWER(TRIM(source)) AS source, COUNT(*) AS count
+                FROM signals
+                WHERE TRIM(source) != ''
+                GROUP BY LOWER(TRIM(source))
+                ORDER BY count DESC, source ASC
+                """
+            ).fetchall()
         durations = [(parse_ts(row["decided_at"]) - parse_ts(row["first_signal"])).total_seconds() / 60 for row in rows]
         durations.sort()
         median = None if not durations else round(durations[len(durations) // 2] if len(durations) % 2 else (durations[len(durations)//2-1] + durations[len(durations)//2]) / 2, 1)
-        return {"signal_to_decision_min": median, "funnel": {"sourced": sourced, "screened": screened, "diligenced": diligenced, "decided": decided}}
+        sources = [{"source": str(row["source"]), "count": int(row["count"])} for row in source_rows]
+        return {
+            "signal_to_decision_min": median,
+            "funnel": {"sourced": sourced, "screened": screened, "diligenced": diligenced, "decided": decided},
+            "signal_diversity": {
+                "total_signals": sum(item["count"] for item in sources),
+                "distinct_sources": len(sources),
+                "sources": sources,
+            },
+        }
 
 
 def decision_brief(diligence: dict[str, Any], memo: dict[str, Any], adversarial: dict[str, Any]) -> dict[str, Any]:

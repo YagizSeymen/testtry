@@ -170,7 +170,12 @@ GET  /api/audit?founder_id=
 
 GET  /api/metrics
   -> {signal_to_decision_min: number | null,
-      funnel: {sourced, screened, diligenced, decided}}
+      funnel: {sourced, screened, diligenced, decided},
+      signal_diversity: {
+        total_signals: number,
+        distinct_sources: number,
+        sources: [{source, count}]
+      }}
 ```
 
 Thesis store invariants:

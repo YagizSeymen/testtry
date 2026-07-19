@@ -76,7 +76,11 @@ type Application = {
 type Recommendation = { invest: boolean; amount: number; rationale: string; based_on: string[] };
 type QueueItem = { application_id: string; company: string; recommendation: Recommendation; memo_id: string };
 type Thesis = { sectors: string[]; stage: string; geo: string[]; check_size: number; risk_appetite: string };
-type Metrics = { signal_to_decision_min: number | null; funnel: { sourced: number; screened: number; diligenced: number; decided: number } };
+type Metrics = {
+  signal_to_decision_min: number | null;
+  funnel: { sourced: number; screened: number; diligenced: number; decided: number };
+  signal_diversity: { total_signals: number; distinct_sources: number; sources: { source: string; count: number }[] };
+};
 type LatencySample = { label: string; ms: number; ok: boolean };
 type ScanRun = { new_founders: number; new_signals: number; candidates_found: number; candidates_reviewed: number; cached: boolean };
 type ChatCitation = { chunk_id: string; citation: number; founder_id: string; founder_name: string; source_type: string; label: string; url: string | null; snippet?: string };
@@ -135,6 +139,25 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
 const displayDate = (value: string) => new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
 const initials = (name: string) => name.split(" ").map((part) => part[0]).slice(0, 2).join("");
+
+function signalSourceCode(source: string): string {
+  const normalized = source.trim().toLowerCase();
+  if (normalized === "github") return "GH";
+  if (normalized === "hn") return "HN";
+  if (normalized === "web") return "WEB";
+  if (normalized === "paper") return "PAP";
+  if (normalized === "hackathon") return "HAK";
+  if (normalized === "synthetic") return "SYN";
+  return normalized.replace(/[^a-z0-9]/g, "").slice(0, 3).toUpperCase() || "?";
+}
+
+function signalSourceClass(source: string): string {
+  const normalized = source.trim().toLowerCase();
+  if (normalized === "github") return "github";
+  if (normalized === "hn") return "hn";
+  if (normalized === "synthetic") return "synthetic";
+  return "web";
+}
 
 function parsedUrl(value: string | null): URL | null {
   if (!value) return null;
@@ -511,6 +534,8 @@ export default function ProductPage() {
 function DashboardView({ founders, chatFounders, metrics, search, setSearch, searchChips, isSearching, onSearch, onClear, onSelect, thesis, onEditThesis, latencies, scanRun, chatSessions, activeChat, activeChatId, onSelectChat, onNewChat, onDeleteChat, chatInput, setChatInput, setChatFounderId, chatRequestBusy, activeChatBusy, onChat }: { founders: Founder[]; chatFounders: Founder[]; metrics: Metrics | null; search: string; setSearch: (value: string) => void; searchChips: string[]; isSearching: boolean; onSearch: (event: FormEvent) => void; onClear: () => void; onSelect: (founder: Founder) => void; thesis: Thesis | null; onEditThesis: () => void; latencies: LatencySample[]; scanRun: ScanRun | null; chatSessions: ChatSession[]; activeChat: ChatSession | null; activeChatId: string; onSelectChat: (chatId: string) => void; onNewChat: () => void; onDeleteChat: (chatId: string) => void; chatInput: string; setChatInput: (value: string) => void; setChatFounderId: (founderId: string) => void; chatRequestBusy: boolean; activeChatBusy: boolean; onChat: (event: FormEvent) => void }) {
   const chatMessages = activeChat?.messages || [];
   const chatFounderId = activeChat?.founderId || "";
+  const signalDiversity = metrics?.signal_diversity;
+  const displayedSignalSources = signalDiversity?.sources.slice(0, 5) || [];
   return <div className="view-grid dashboard-grid">
     <section className="main-column">
       <div className="metric-strip">
@@ -538,12 +563,12 @@ function DashboardView({ founders, chatFounders, metrics, search, setSearch, sea
     <aside className="side-column">
       <section className="thesis-surface"><div className="surface-head"><div><p className="eyebrow">Active thesis</p><h2>{thesis?.stage ?? "Loading"}</h2></div><button className="icon-button compact" title="Edit fund thesis" onClick={onEditThesis}><PanelRightOpen size={17} /></button></div><div className="thesis-list"><span><Target size={15} />{thesis?.sectors.join(", ")}</span><span><Activity size={15} />{thesis?.geo.join(", ")}</span><span><BadgeCheck size={15} />${(thesis?.check_size || 100000).toLocaleString()} check</span><span><ShieldAlert size={15} />{thesis?.risk_appetite} risk appetite</span></div></section>
       <PerformanceSurface latencies={latencies} />
-      <section className="signal-map"><div className="surface-head"><div><p className="eyebrow">Evidence posture</p><h2>Signal diversity</h2></div><Sparkles size={18} /></div><div className="radar"><span className="radar-frame frame-one" /><span className="radar-frame frame-two" /><span className="radar-axis axis-x" /><span className="radar-axis axis-y" /><span className="radar-core"><b>03</b><em>MEM</em></span><i className="node n1">GH</i><i className="node n2">HN</i><i className="node n3">GH</i><i className="node n4">W</i><i className="node n5">S</i></div><div className="legend"><span><i className="dot github" />GitHub</span><span><i className="dot hn" />HN</span><span><i className="dot web" />Public web</span></div></section>
+      <section className="signal-map"><div className="surface-head"><div><p className="eyebrow">Evidence posture</p><h2>Signal diversity</h2></div><Sparkles size={18} /></div><div className="radar" title={`${signalDiversity?.total_signals ?? 0} stored signals across ${signalDiversity?.distinct_sources ?? 0} normalized sources`}><span className="radar-frame frame-one" /><span className="radar-frame frame-two" /><span className="radar-axis axis-x" /><span className="radar-axis axis-y" /><span className="radar-core"><b>{String(signalDiversity?.distinct_sources ?? 0).padStart(2, "0")}</b><em>SRC</em></span>{displayedSignalSources.map((item, index) => <i className={`node n${index + 1}`} key={item.source} title={`${item.source}: ${item.count} signals`}>{signalSourceCode(item.source)}</i>)}</div><div className="legend">{displayedSignalSources.length > 0 ? displayedSignalSources.map((item) => <span key={item.source}><i className={`dot ${signalSourceClass(item.source)}`} />{item.source} {item.count}</span>) : <span>No signals stored</span>}</div></section>
     </aside>
     <section className="founder-chat">
       <div className="chat-layout">
         <aside className="chat-history-panel">
-          <div className="chat-history-head"><span><History size={14} />Chats</span><button title="New chat" onClick={onNewChat}><MessageSquarePlus size={15} /></button></div>
+          <div className="chat-history-head"><span><History size={14} />Chats</span><button title="New chat" onClick={onNewChat} disabled={chatRequestBusy}><MessageSquarePlus size={15} /></button></div>
           <div className="chat-history-list">{chatSessions.map((session) => {
             const founder = chatFounders.find((item) => item.founder_id === session.founderId);
             return <div className={session.id === activeChatId ? "chat-history-row active" : "chat-history-row"} key={session.id}>
