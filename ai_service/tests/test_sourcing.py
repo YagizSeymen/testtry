@@ -191,6 +191,17 @@ class CrawlerGuardrailTest(unittest.TestCase):
         with self.assertRaises(crawler.CrawlError):
             crawler.validate_public_url("http://127.0.0.1/internal")
 
+    def test_html_extraction_omits_title_and_navigation_chrome(self):
+        text, title = crawler.html_to_text(
+            "<html><title>Kirk 42</title><body><nav>About Experience Results</nav>"
+            "<main>Kirk Patrick builds ML infrastructure for regulated teams.</main></body></html>"
+        )
+
+        self.assertEqual(title, "Kirk 42")
+        self.assertNotIn("Kirk 42", text)
+        self.assertNotIn("About Experience Results", text)
+        self.assertIn("Kirk Patrick builds ML infrastructure", text)
+
 
 if __name__ == "__main__":
     unittest.main()

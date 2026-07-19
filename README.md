@@ -75,6 +75,38 @@ extract/query work and `gpt-5.6-terra` for evidence reasoning and memo stages.
 
 ## Public Demo Deployment
 
+### Vercel
+
+[`vercel.json`](vercel.json) deploys the Next.js frontend and FastAPI backend
+as two Vercel Services under one public domain. Requests to `/api/*` are routed
+to FastAPI; all other requests go to Next.js. This keeps the browser on a
+same-origin API and keeps `OPENAI_API_KEY` server-side.
+
+1. In Vercel, import `YagizSeymen/testtry` and select the repository root as
+   the Root Directory.
+2. Set the project framework to **Services** (Vercel's current multi-service
+   deployment mode) and leave the build/output commands at their defaults.
+3. Add these existing server-side environment variables for Preview and
+   Production:
+
+   ```text
+   OPENAI_API_KEY = your_key_here
+   VC_BRAIN_LLM_MODE = openai
+   ```
+
+   Omit both variables to use the deterministic, no-key demo mode. Never add
+   the key as `NEXT_PUBLIC_*` or to the frontend service.
+4. Deploy, then verify `https://<your-domain>/api/metrics` before opening the
+   application.
+
+Vercel functions have no durable local disk. The deployment therefore stores
+SQLite in `/tmp` and reseeds the reviewed cache on each cold start; changes made
+during a warm demo session are available to that instance only. This is suitable
+for the hackathon demo. For durable multi-user data, use a managed Postgres
+database before relying on the deployment for real investor workflows.
+
+### Render
+
 This repository includes a single-container public-demo configuration:
 
 - [`Dockerfile`](Dockerfile) builds a static Next.js client and serves it from

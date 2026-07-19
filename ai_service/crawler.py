@@ -59,13 +59,13 @@ class _TextParser(HTMLParser):
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript", "svg"}:
+        if tag in {"script", "style", "noscript", "svg", "nav", "header", "footer", "aside"}:
             self._ignored_depth += 1
         if tag == "title":
             self._in_title = True
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript", "svg"} and self._ignored_depth:
+        if tag in {"script", "style", "noscript", "svg", "nav", "header", "footer", "aside"} and self._ignored_depth:
             self._ignored_depth -= 1
         if tag == "title":
             self._in_title = False
@@ -76,6 +76,7 @@ class _TextParser(HTMLParser):
             return
         if self._in_title:
             self.title = f"{self.title} {text}".strip()
+            return
         self.parts.append(text)
 
 

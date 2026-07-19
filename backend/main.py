@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sqlite3
 import uuid
@@ -27,10 +28,19 @@ from ai_service import sourcing_orchestration
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
-# A deployed container mounts a persistent disk at /data; local development
-# continues to use the ignored database next to this module.
+# A Render container mounts a persistent disk at /data. Vercel functions have
+# an ephemeral, writable /tmp directory, so each cold start begins from the
+# reviewed cache rather than attempting to write into the read-only deployment
+# bundle. Local development continues to use the ignored database next to this
+# module.
 PERSISTENT_DATABASE_PATH = Path("/data/venture_intelligence.db")
-DATABASE_PATH = PERSISTENT_DATABASE_PATH if PERSISTENT_DATABASE_PATH.parent.is_dir() else Path(__file__).with_name("venture_intelligence.db")
+VERCEL_DATABASE_PATH = Path("/tmp/venture_intelligence.db")
+if os.getenv("VERCEL") == "1":
+    DATABASE_PATH = VERCEL_DATABASE_PATH
+elif PERSISTENT_DATABASE_PATH.parent.is_dir():
+    DATABASE_PATH = PERSISTENT_DATABASE_PATH
+else:
+    DATABASE_PATH = Path(__file__).with_name("venture_intelligence.db")
 CACHE_PATH = Path(__file__).parent / "fetchers" / "scan_cache.json"
 DEFAULT_THESIS = {
     "sectors": ["AI infrastructure"],
@@ -97,6 +107,7 @@ class Store:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
         self.path = path
         self.initialize()
+        self.deduplicate_live_signals()
         self.seed_cache()
 
     @contextmanager
@@ -287,15 +298,21 @@ class Store:
                 # A single page can support one observation of each signal
                 # type. Repeatedly matching different sentences on that same
                 # page must not inflate the deterministic Founder Score.
-                seen: set[tuple[str, str]] = set()
+                seen_source_types: set[tuple[str, str]] = set()
+                seen_claims: set[tuple[str, str]] = set()
                 for evidence in candidate_evidence:
-                    key = (
+                    source_type_key = (
                         str(evidence.get("signal_type") or ""),
                         str(evidence.get("source_url") or ""),
                     )
-                    if key in seen:
+                    claim_key = (
+                        str(evidence.get("source_url") or ""),
+                        re.sub(r"\s+", " ", str(evidence.get("claim") or "")).strip().casefold(),
+                    )
+                    if source_type_key in seen_source_types or claim_key in seen_claims:
                         continue
-                    seen.add(key)
+                    seen_source_types.add(source_type_key)
+                    seen_claims.add(claim_key)
                     deduplicated.append(evidence)
                     if len(deduplicated) == 12:
                         break
@@ -372,6 +389,65 @@ class Store:
                         "Stored bounded, source-backed public-web signals for human review.",
                     )
         return new_founders, new_signals
+
+    def deduplicate_live_signals(self) -> int:
+        """Remove legacy duplicate live signals that share one source and claim.
+
+        A crawler page may contain one passage that matches several broad signal
+        categories. The original importer stored each category separately, so a
+        founder profile could render the same source text multiple times. Keep
+        the most useful category for that passage and refresh the score after
+        removing the redundant records.
+        """
+
+        def claim_key(row: sqlite3.Row) -> tuple[str, str] | None:
+            text = str(row["text"] or "")
+            if not text.startswith("Live ") or ":" not in text:
+                return None
+            claim = text.split(":", 1)[1]
+            return (str(row["url"] or ""), re.sub(r"\s+", " ", claim).strip().casefold())
+
+        def priority(row: sqlite3.Row) -> tuple[int, str]:
+            text = str(row["text"] or "").casefold()
+            category = text.split(":", 1)[0]
+            ranks = {
+                "live technical founder": 0,
+                "live execution": 1,
+                "live product traction": 2,
+                "live ai infrastructure": 3,
+            }
+            return (ranks.get(category, 99), str(row["signal_id"]))
+
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT signal_id, founder_id, text, url FROM signals WHERE text LIKE 'Live %' AND url IS NOT NULL"
+            ).fetchall()
+            grouped: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+            for row in rows:
+                key = claim_key(row)
+                if key is not None:
+                    grouped.setdefault((str(row["founder_id"]), *key), []).append(row)
+            removed_by_founder: dict[str, int] = {}
+            for records in grouped.values():
+                for duplicate in sorted(records, key=priority)[1:]:
+                    db.execute("DELETE FROM signals WHERE signal_id = ?", (duplicate["signal_id"],))
+                    founder_id = str(duplicate["founder_id"])
+                    removed_by_founder[founder_id] = removed_by_founder.get(founder_id, 0) + 1
+
+            if removed_by_founder:
+                snapshot_ts = now_iso()
+                for founder_id, removed in removed_by_founder.items():
+                    self._record_score(db, founder_id, snapshot_ts)
+                    self._audit(
+                        db,
+                        founder_id,
+                        None,
+                        "ingest",
+                        "system",
+                        "deduplicated_live_signals",
+                        f"Removed {removed} duplicate live signal record(s) from one source passage.",
+                    )
+        return sum(removed_by_founder.values())
 
     def _signals(self, db: sqlite3.Connection, founder_id: str) -> list[dict[str, Any]]:
         rows = db.execute(

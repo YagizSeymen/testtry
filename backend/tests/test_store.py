@@ -84,6 +84,75 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("Funded Founder", [item["name"] for item in dashboard])
         self.assertNotIn("Unproven Founder", [item["name"] for item in dashboard])
 
+    def test_live_discovery_deduplicates_one_source_claim_across_categories(self) -> None:
+        live_result = {
+            "discovery": {
+                "evidence": [
+                    {
+                        "candidate_id": "cand_kirk",
+                        "evidence_id": "ev_kirk_technical",
+                        "signal_type": "technical_founder",
+                        "claim": "Kirk Patrick is an ML platform engineer.",
+                        "source_url": "https://example.com/kirk",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                    {
+                        "candidate_id": "cand_kirk",
+                        "evidence_id": "ev_kirk_traction",
+                        "signal_type": "product_traction",
+                        "claim": "Kirk Patrick is an ML platform engineer.",
+                        "source_url": "https://example.com/kirk",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                    {
+                        "candidate_id": "cand_kirk",
+                        "evidence_id": "ev_kirk_execution",
+                        "signal_type": "execution",
+                        "claim": "Kirk Patrick shipped an ML platform for regulated teams.",
+                        "source_url": "https://example.com/kirk",
+                        "captured_at": "2026-07-19T00:00:00Z",
+                    },
+                ]
+            },
+            "ranking": {
+                "ranked_candidates": [
+                    {
+                        "candidate_id": "cand_kirk",
+                        "company_name": "Kirk Platform",
+                        "founder_names": ["Kirk Patrick"],
+                        "status": "candidate",
+                    }
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            self.assertEqual(store.ingest_live_discovery(live_result), (1, 2))
+            kirk_id = next(item["founder_id"] for item in store.dashboard() if item["name"] == "Kirk Patrick")
+            profile = store.founder_profile(kirk_id)
+
+        self.assertEqual(len(profile["signals"]), 2)
+        self.assertEqual(sum("ML platform engineer" in signal["text"] for signal in profile["signals"]), 1)
+
+    def test_live_signal_cleanup_removes_existing_duplicate_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            founder_id = store.resolve_or_create_founder("Kirk Patrick")
+            with store.connection() as db:
+                db.execute(
+                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                    ("sig_kirk_technical", founder_id, "2026-07-19T00:00:00Z", "web", "Live technical founder: Kirk Patrick is an ML platform engineer.", "https://example.com/kirk"),
+                )
+                db.execute(
+                    "INSERT INTO signals VALUES(?, ?, ?, ?, ?, ?)",
+                    ("sig_kirk_traction", founder_id, "2026-07-19T00:00:00Z", "web", "Live product traction: Kirk Patrick is an ML platform engineer.", "https://example.com/kirk"),
+                )
+            self.assertEqual(store.deduplicate_live_signals(), 1)
+            profile = store.founder_profile(founder_id)
+
+        self.assertEqual(len(profile["signals"]), 1)
+        self.assertIn("technical founder", profile["signals"][0]["text"])
+
     def test_inbound_application_converges_on_cached_founder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")
