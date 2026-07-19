@@ -15,6 +15,12 @@ def normalize_founder_name(name: str) -> str:
     return re.sub(r"[\s\W_]+", "", lowered, flags=re.UNICODE)
 
 
+def core_person_name(name: str) -> str:
+    """Normalize after dropping parenthetical labels like (Synthetic)."""
+    without_parens = re.sub(r"\([^)]*\)", "", name)
+    return normalize_founder_name(without_parens)
+
+
 @dataclass(frozen=True)
 class SignalPoint:
     """Minimal signal shape for scoring (ts + source)."""

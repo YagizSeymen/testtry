@@ -68,7 +68,7 @@ class ScoreSnapshotRow(Base):
 
 
 class Application(Base):
-    """Placeholder row so founder.applications can list IDs before pipeline commit."""
+    """Inbound opportunity. Stage readiness = nullable JSON stage payloads."""
 
     __tablename__ = "applications"
 
@@ -78,6 +78,14 @@ class Application(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     deck_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    claims_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    axes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    diligence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memo_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    adversarial_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_brief_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thesis_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     founder: Mapped[Founder] = relationship(back_populates="applications")
 
@@ -92,3 +100,4 @@ class AuditEvent(Base):
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
     founder_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    application_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

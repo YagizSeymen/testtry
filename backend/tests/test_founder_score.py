@@ -11,6 +11,12 @@ def test_normalize_founder_name_strips_spaces_and_punctuation() -> None:
     assert normalize_founder_name("  Ada  Lovelace ") == "adalovelace"
 
 
+def test_core_person_name_drops_parentheticals() -> None:
+    from app.domain import core_person_name
+
+    assert core_person_name("Maya Chen (Synthetic)") == core_person_name("Maya Chen")
+
+
 def test_founder_score_matches_fixture_golden_case() -> None:
     """Six synthetic signals, one source, one in last 30d → 59 ± 22 (fixtures README)."""
     signals = [

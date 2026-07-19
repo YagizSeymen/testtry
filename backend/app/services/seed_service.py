@@ -95,6 +95,7 @@ class SeedService:
                     status="open",
                     deck_text="",
                     created_at=datetime.now(timezone.utc),
+                    claims_json="[]",
                 )
             )
 

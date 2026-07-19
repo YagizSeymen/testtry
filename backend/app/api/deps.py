@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.services import FounderQueryService, ThesisService
+from app.services.application_service import ApplicationService
 
 
 def get_thesis_service(db: Session = Depends(get_db)) -> Generator[ThesisService, None, None]:
@@ -17,3 +18,9 @@ def get_founder_query_service(
     db: Session = Depends(get_db),
 ) -> Generator[FounderQueryService, None, None]:
     yield FounderQueryService(db)
+
+
+def get_application_service(
+    db: Session = Depends(get_db),
+) -> Generator[ApplicationService, None, None]:
+    yield ApplicationService(db)
