@@ -372,6 +372,21 @@ class Store:
                       detail TEXT NOT NULL
                     )
                     """,
+                    """
+                    CREATE TABLE IF NOT EXISTS rag_chunks (
+                      chunk_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL REFERENCES founders(founder_id),
+                      founder_name TEXT NOT NULL,
+                      source_type TEXT NOT NULL,
+                      source_id TEXT NOT NULL,
+                      label TEXT NOT NULL,
+                      url TEXT,
+                      content TEXT NOT NULL,
+                      content_hash TEXT NOT NULL,
+                      embedding_json TEXT,
+                      updated_at TEXT NOT NULL
+                    )
+                    """,
                 ):
                     db.execute(statement)
             else:
@@ -442,6 +457,20 @@ class Store:
                       actor TEXT NOT NULL,
                       action TEXT NOT NULL,
                       detail TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS rag_chunks (
+                      chunk_id TEXT PRIMARY KEY,
+                      founder_id TEXT NOT NULL,
+                      founder_name TEXT NOT NULL,
+                      source_type TEXT NOT NULL,
+                      source_id TEXT NOT NULL,
+                      label TEXT NOT NULL,
+                      url TEXT,
+                      content TEXT NOT NULL,
+                      content_hash TEXT NOT NULL,
+                      embedding_json TEXT,
+                      updated_at TEXT NOT NULL,
+                      FOREIGN KEY(founder_id) REFERENCES founders(founder_id)
                     );
                     """
                 )
@@ -896,6 +925,165 @@ class Store:
             "score_history": history,
             "applications": applications,
         }
+
+    @staticmethod
+    def _rag_content(value: Any) -> str:
+        if isinstance(value, str):
+            return re.sub(r"\s+", " ", value).strip()[:2400]
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(", ", ": "))[:2400]
+
+    def _build_rag_chunks(self, db: Any, founder_id: str) -> list[dict[str, Any]]:
+        founder = db.execute("SELECT * FROM founders WHERE founder_id = ?", (founder_id,)).fetchone()
+        if founder is None:
+            raise HTTPException(404, "Founder not found.")
+        founder_name = str(founder["name"])
+        chunks: list[dict[str, Any]] = []
+
+        def add(source_type: str, source_id: str, label: str, value: Any, url: str | None = None) -> None:
+            content = self._rag_content(value)
+            if not content:
+                return
+            chunks.append(
+                {
+                    "chunk_id": stable_id("rag", founder_id, source_type, source_id, label),
+                    "founder_id": founder_id,
+                    "founder_name": founder_name,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "label": label,
+                    "url": url,
+                    "content": content,
+                    "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                }
+            )
+
+        add(
+            "profile",
+            founder_id,
+            "Founder profile",
+            {
+                "name": founder_name,
+                "headline": founder["headline"],
+                "location": founder["location"],
+                "origin": founder["origin"],
+                "bio": founder["bio"],
+            },
+        )
+        for signal in db.execute(
+            "SELECT signal_id, ts, source, text, url FROM signals WHERE founder_id = ? ORDER BY ts DESC",
+            (founder_id,),
+        ).fetchall():
+            add(
+                "evidence",
+                str(signal["signal_id"]),
+                f"Evidence · {signal['source']}",
+                {"captured_at": signal["ts"], "source": signal["source"], "claim": signal["text"]},
+                signal["url"],
+            )
+
+        applications = db.execute(
+            "SELECT * FROM applications WHERE founder_id = ? ORDER BY created_at DESC", (founder_id,)
+        ).fetchall()
+        for application in applications:
+            application_id = str(application["application_id"])
+            company_name = str(application["company_name"])
+            add(
+                "application",
+                application_id,
+                f"Application · {company_name}",
+                {"company": company_name, "status": application["status"], "created_at": application["created_at"]},
+            )
+            for claim in db.execute(
+                "SELECT claim_id, type, text, source_span FROM claims WHERE application_id = ?", (application_id,)
+            ).fetchall():
+                add(
+                    "claim",
+                    str(claim["claim_id"]),
+                    f"Submitted claim · {company_name}",
+                    {"type": claim["type"], "claim": claim["text"], "source_span": claim["source_span"]},
+                )
+            structured_fields = (
+                ("screening", "axes_json", "Screening axes"),
+                ("diligence", "diligence_json", "Truth-gap diligence"),
+                ("memo", "memo_json", "Investment memo"),
+                ("adversary", "adversarial_json", "Devil's advocate report"),
+                ("decision_brief", "decision_brief_json", "Decision brief"),
+            )
+            for source_type, column, label in structured_fields:
+                parsed = loads(application[column], None)
+                if parsed is not None:
+                    add(source_type, application_id, f"{label} · {company_name}", parsed)
+        return chunks
+
+    def sync_rag_chunks(self, founder_id: str | None = None) -> list[dict[str, Any]]:
+        """Upsert current Memory chunks while retaining unchanged embeddings."""
+
+        with self.connection() as db:
+            if founder_id:
+                founder_ids = [founder_id]
+            else:
+                founder_ids = [str(row["founder_id"]) for row in db.execute("SELECT founder_id FROM founders").fetchall()]
+            for current_founder_id in founder_ids:
+                chunks = self._build_rag_chunks(db, current_founder_id)
+                current_ids = {str(chunk["chunk_id"]) for chunk in chunks}
+                existing = {
+                    str(row["chunk_id"]): row
+                    for row in db.execute(
+                        "SELECT chunk_id, content_hash, embedding_json FROM rag_chunks WHERE founder_id = ?",
+                        (current_founder_id,),
+                    ).fetchall()
+                }
+                for chunk in chunks:
+                    previous = existing.get(str(chunk["chunk_id"]))
+                    embedding_json = (
+                        previous["embedding_json"]
+                        if previous is not None and previous["content_hash"] == chunk["content_hash"]
+                        else None
+                    )
+                    db.execute(
+                        """INSERT INTO rag_chunks(
+                             chunk_id, founder_id, founder_name, source_type, source_id, label, url,
+                             content, content_hash, embedding_json, updated_at
+                           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT (chunk_id) DO UPDATE SET
+                             founder_name = excluded.founder_name,
+                             source_type = excluded.source_type,
+                             source_id = excluded.source_id,
+                             label = excluded.label,
+                             url = excluded.url,
+                             content = excluded.content,
+                             content_hash = excluded.content_hash,
+                             embedding_json = excluded.embedding_json,
+                             updated_at = excluded.updated_at""",
+                        (
+                            chunk["chunk_id"], chunk["founder_id"], chunk["founder_name"],
+                            chunk["source_type"], chunk["source_id"], chunk["label"], chunk["url"],
+                            chunk["content"], chunk["content_hash"], embedding_json, now_iso(),
+                        ),
+                    )
+                stale_ids = set(existing) - current_ids
+                for stale_id in stale_ids:
+                    db.execute("DELETE FROM rag_chunks WHERE chunk_id = ?", (stale_id,))
+            if not founder_ids:
+                return []
+            if founder_id:
+                rows = db.execute(
+                    "SELECT * FROM rag_chunks WHERE founder_id = ? ORDER BY founder_name, source_type, label",
+                    (founder_id,),
+                ).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM rag_chunks ORDER BY founder_name, source_type, label").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_rag_embeddings(self, updates: dict[str, list[float]]) -> None:
+        if not updates:
+            return
+        with self.connection() as db:
+            for chunk_id, embedding in updates.items():
+                db.execute(
+                    "UPDATE rag_chunks SET embedding_json = ?, updated_at = ? WHERE chunk_id = ?",
+                    (dumps(embedding), now_iso(), chunk_id),
+                )
 
     def resolve_or_create_founder(self, name: str) -> str:
         key = normalized_name(name)
@@ -1499,6 +1687,71 @@ def query_founders(payload: dict[str, Any]) -> dict[str, Any]:
         if why:
             results.append({"founder_id": founder["founder_id"], "why_matched": why})
     return {"filter": query_filter, "results": results}
+
+
+@app.post("/api/chat")
+def founder_memory_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    message = payload.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise HTTPException(422, "message is required.")
+    if len(message) > 4000:
+        raise HTTPException(422, "message must be 4000 characters or fewer.")
+    founder_id = payload.get("founder_id")
+    if founder_id is not None and (not isinstance(founder_id, str) or not founder_id.strip()):
+        raise HTTPException(422, "founder_id must be a non-empty string or null.")
+    history_input = payload.get("history", [])
+    if not isinstance(history_input, list):
+        raise HTTPException(422, "history must be an array.")
+    history: list[dict[str, str]] = []
+    for item in history_input[-8:]:
+        if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and content.strip():
+            history.append({"role": str(item["role"]), "content": content.strip()[:2000]})
+
+    chunks = store.sync_rag_chunks(founder_id)
+    if not chunks:
+        return {
+            "answer": "There is no Founder Memory available in this scope yet.",
+            "insufficient_evidence": True,
+            "citations": [],
+            "retrieval": {"searched_chunks": 0, "returned_chunks": 0},
+        }
+    try:
+        result = llm.founder_chat(message.strip(), history, chunks)
+    except Exception as exc:
+        logger.warning("Founder Memory chat failed: %s", exc)
+        raise HTTPException(502, "Founder Memory chat could not complete. Please retry.") from exc
+    updates = result.pop("embedding_updates", {})
+    retrieved_chunk_ids = result.pop("retrieved_chunk_ids", [])
+    if isinstance(updates, dict):
+        store.save_rag_embeddings(updates)
+    chunks_by_id = {str(chunk["chunk_id"]): chunk for chunk in chunks}
+    citation_number = {str(chunk_id): index for index, chunk_id in enumerate(retrieved_chunk_ids, start=1)}
+    citations = []
+    for chunk_id in result.get("cited_chunk_ids", []):
+        chunk = chunks_by_id.get(str(chunk_id))
+        if not chunk:
+            continue
+        citations.append(
+            {
+                "chunk_id": chunk["chunk_id"],
+                "citation": citation_number.get(str(chunk["chunk_id"]), len(citations) + 1),
+                "founder_id": chunk["founder_id"],
+                "founder_name": chunk["founder_name"],
+                "source_type": chunk["source_type"],
+                "label": chunk["label"],
+                "url": chunk["url"],
+                "snippet": re.sub(r"\s+", " ", str(chunk["content"])).strip()[:360],
+            }
+        )
+    return {
+        "answer": str(result.get("answer") or "I could not produce a grounded answer."),
+        "insufficient_evidence": bool(result.get("insufficient_evidence")),
+        "citations": citations,
+        "retrieval": {"searched_chunks": len(chunks), "returned_chunks": len(citations)},
+    }
 
 
 @app.get("/api/founders/{founder_id}")

@@ -9,10 +9,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_service import pipeline, sourcing
+from ai_service import pipeline, rag, sourcing
 
 
 class LLMWrapper:
+    def founder_chat(
+        self,
+        message: str,
+        history: list[dict[str, str]],
+        chunks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return rag.answer_founder_memory({"message": message, "history": history, "chunks": chunks})
+
     def extract(self, company_name: str, deck_text: str) -> dict[str, Any]:
         return pipeline.extract_application({"company_name": company_name, "deck_text": deck_text})
 

@@ -7,6 +7,7 @@ __all__ = [
     "model_router",
     "orchestration",
     "runtime",
+    "rag",
     "server",
     "sourcing",
     "sourcing_orchestration",

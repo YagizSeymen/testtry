@@ -12,6 +12,42 @@ from backend.main import PostgresConnection, Store, decision_brief, founder_sear
 
 
 class StoreTests(unittest.TestCase):
+    def test_rag_chunks_cover_memory_and_reuse_only_current_embeddings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "firstcheck.db")
+            created = store.create_application(
+                "VectorWorks",
+                "Founder: Ada Vector\nVectorWorks built an inference observability tool.",
+                {
+                    "founder_name": "Ada Vector",
+                    "claims": [
+                        {
+                            "claim_id": "clm_vector_product",
+                            "type": "product",
+                            "text": "VectorWorks built an inference observability tool.",
+                            "source_span": "VectorWorks built an inference observability tool.",
+                        }
+                    ],
+                },
+            )
+            chunks = store.sync_rag_chunks(created["founder_id"])
+            source_types = {chunk["source_type"] for chunk in chunks}
+            claim_chunk = next(chunk for chunk in chunks if chunk["source_type"] == "claim")
+            store.save_rag_embeddings({claim_chunk["chunk_id"]: [0.1, 0.2, 0.3]})
+            unchanged = store.sync_rag_chunks(created["founder_id"])
+            unchanged_claim = next(chunk for chunk in unchanged if chunk["chunk_id"] == claim_chunk["chunk_id"])
+            with store.connection() as db:
+                db.execute(
+                    "UPDATE claims SET text = ? WHERE claim_id = ?",
+                    ("VectorWorks changed its product claim.", "clm_vector_product"),
+                )
+            changed = store.sync_rag_chunks(created["founder_id"])
+            changed_claim = next(chunk for chunk in changed if chunk["chunk_id"] == claim_chunk["chunk_id"])
+
+        self.assertTrue({"profile", "application", "claim"}.issubset(source_types))
+        self.assertIsNotNone(unchanged_claim["embedding_json"])
+        self.assertIsNone(changed_claim["embedding_json"])
+
     def test_application_research_is_idempotent_and_product_copy_does_not_inflate_founder_score(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "firstcheck.db")

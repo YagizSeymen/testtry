@@ -117,6 +117,14 @@ POST /api/query {q}
   -> {filter: QueryFilter,
       results: [{founder_id, why_matched: [str]}]}
 
+POST /api/chat {message,
+                founder_id: founder_id | null,
+                history: [{role: "user" | "assistant", content}]}
+  -> {answer, insufficient_evidence: bool,
+      citations: [{chunk_id, citation, founder_id, founder_name, source_type,
+                   label, url: str | null, snippet}],
+      retrieval: {searched_chunks, returned_chunks}}
+
 GET  /api/founders/{id}
   -> {profile: Profile, signals: [Signal],
       score_history: [{ts, score, band}],
@@ -180,6 +188,18 @@ Aggregate read invariants:
   `adversarial` and `decision_brief` remain null in Version A and until the
   adversary endpoint completes. The frontend must render every nullable state.
 - Aggregate evidence resolves click-through without a second request.
+
+Founder Memory chat invariants:
+- The chat retrieves only from persisted founder profiles, Memory signals,
+  submitted claims, screening, diligence, memo, adversary, and Decision Brief
+  chunks. It never performs a web crawl during chat.
+- A null founder_id searches all Founder Memory; a founder_id scopes retrieval
+  to that person. Conversation history is context only and never evidence.
+- Chunk IDs are stable. Unchanged 256-dimensional text-embedding-3-small
+  vectors are retained in the product database; changed chunks are re-embedded.
+- GPT-5.6 Luna writes one schema-constrained answer from the top retrieved
+  chunks. Unsupported answers are refused and returned citations always
+  resolve to supplied chunks. The output is non-authoritative.
 
 Adversary endpoint invariants:
 - A missing memo returns HTTP 409.

@@ -31,6 +31,7 @@ MODEL_BY_STAGE = {
     "memo": TERRA_MODEL,
     "adversary": TERRA_MODEL,
     "verify_adversary": TERRA_MODEL,
+    "founder_chat": LUNA_MODEL,
     # Legacy research helpers remain available while the backend is wired.
     "sourcing_plan": LUNA_MODEL,
     "candidate_discovery": LUNA_MODEL,
@@ -110,6 +111,10 @@ STAGE_INSTRUCTIONS = {
     "verify_adversary": (
         "Use the same truth-gap discipline to verify all supplied adversarial objections "
         "in one batch. Do not declare a winner and do not invent evidence IDs."
+    ),
+    "founder_chat": (
+        "Answer questions only from retrieved Founder Memory chunks. Cite every factual statement, "
+        "state uncertainty, and refuse unsupported conclusions or final investment decisions."
     ),
     "sourcing_plan": "Decompose an investment thesis into focused, public-web research queries. Do not rank companies or make an investment recommendation.",
     "candidate_discovery": "Find source-backed founder and company leads for the thesis. Retain only claims tied to web citations. Never infer no funding from an absence of results.",
