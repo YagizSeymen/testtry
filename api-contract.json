@@ -21,7 +21,7 @@
     "verify_adversary": "gpt-5.6-terra"
   },
   "enums": {
-    "origin": ["github", "hn", "inbound", "synthetic"],
+    "origin": ["github", "hn", "web", "inbound", "synthetic"],
     "claim_type": ["traction", "team", "market", "product"],
     "human_status": ["open", "approved", "rejected"],
     "trend": ["up", "flat", "down"],

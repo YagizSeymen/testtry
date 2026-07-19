@@ -28,6 +28,43 @@ VALID_SIGNALS = {
     "public_vc_funding",
     "accelerator",
 }
+
+LIVE_DISCOVERY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["candidates", "limitations"],
+    "properties": {
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["company_name", "company_url", "founder_names", "observations"],
+                "properties": {
+                    "company_name": {"type": "string"},
+                    "company_url": {"type": ["string", "null"]},
+                    "founder_names": {"type": "array", "items": {"type": "string"}},
+                    "observations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["signal_type", "claim", "quote", "source_url", "source_title"],
+                            "properties": {
+                                "signal_type": {"type": "string", "enum": sorted(VALID_SIGNALS)},
+                                "claim": {"type": "string"},
+                                "quote": {"type": "string"},
+                                "source_url": {"type": "string"},
+                                "source_title": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "limitations": {"type": "array", "items": {"type": "string"}},
+    },
+}
 DEFAULT_REQUIRED_SIGNALS = [
     "europe_location",
     "technical_founder",
@@ -259,11 +296,52 @@ def _normalise_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _signals_for_sentence(sentence: str) -> list[str]:
     lower = sentence.lower()
-    return [
+    signals = [
         signal
         for signal, keywords in SIGNAL_KEYWORDS.items()
         if any(keyword in lower for keyword in keywords)
     ]
+    # Keyword matches alone are too weak for a crawler. For example, a GitHub
+    # navigation sentence mentioning "users" is not product traction, and a
+    # product feature is not evidence that someone is a technical founder.
+    if "product_traction" in signals and not re.search(
+        r"\b(customer|customers|pilot|revenue|arr|mrr|retention|paying|contract|waitlist)\b", lower
+    ):
+        signals.remove("product_traction")
+    if "europe_location" in signals and not re.search(
+        r"\b(berlin|paris|london|amsterdam|munich|stockholm|helsinki|copenhagen|zurich|lisbon|barcelona|milan|vienna|dublin|italy|germany|france|spain|portugal|sweden|finland|denmark|netherlands|switzerland|austria|ireland|bulgaria)\b",
+        lower,
+    ):
+        signals.remove("europe_location")
+    if "execution" in signals and not re.search(
+        r"\b(launched|shipped|deployed|released|production|hackathon|winner|finalist|paper|patent|commit)\b",
+        lower,
+    ):
+        signals.remove("execution")
+    if "technical_founder" in signals and not re.search(
+        r"\b(founder|co-founder|ceo|cto|engineer|developer|researcher|maintains)\b", lower
+    ):
+        signals.remove("technical_founder")
+    return signals
+
+
+def _is_substantive_source_sentence(sentence: str) -> bool:
+    """Reject common page chrome before applying evidence keyword rules."""
+
+    lower = sentence.casefold()
+    boilerplate = (
+        "search code",
+        "search repositories",
+        "repositories, users, issues",
+        "pull requests",
+        "sign in",
+        "sign up",
+        "skip to content",
+        "toggle navigation",
+        "terms privacy",
+        "cookie preferences",
+    )
+    return len(core.tokenize(sentence)) >= 6 and not any(fragment in lower for fragment in boilerplate)
 
 
 def _source_from_document(source: dict[str, Any]) -> dict[str, Any]:
@@ -323,7 +401,9 @@ def _discover_from_documents(plan: dict[str, Any], documents: list[Any]) -> dict
         source = _source_from_document(source_input)
         candidates[candidate["candidate_id"]] = candidates.get(candidate["candidate_id"], candidate)
         sources[source["source_id"]] = source
-        for sentence in core.split_sentences(page_text)[:40]:
+        for sentence in core.split_sentences(page_text)[:80]:
+            if not _is_substantive_source_sentence(sentence):
+                continue
             for signal in _signals_for_sentence(sentence):
                 item = _evidence_record(candidates[candidate["candidate_id"]], source, signal, sentence)
                 evidence[item["evidence_id"]] = item
@@ -357,9 +437,18 @@ def _attr(value: Any, key: str, default: Any = None) -> Any:
 def _response_citation_urls(response: Any) -> set[str]:
     urls: set[str] = set()
     for item in _attr(response, "output", []) or []:
+        # `include=["web_search_call.action.sources"]` returns every source
+        # the tool consulted. This is more reliable than inline annotations
+        # when the model's final answer is constrained to JSON.
+        action = _attr(item, "action", {})
+        for source in _attr(action, "sources", []) or []:
+            url = _attr(source, "url") or _attr(source, "source_url")
+            if url:
+                urls.add(str(url))
         for content in _attr(item, "content", []) or []:
             for annotation in _attr(content, "annotations", []) or []:
-                url = _attr(annotation, "url")
+                citation = _attr(annotation, "url_citation", {})
+                url = _attr(annotation, "url") or _attr(citation, "url")
                 if url:
                     urls.add(str(url))
     return urls
@@ -409,13 +498,24 @@ def _discover_with_openai_web_search(plan: dict[str, Any]) -> dict[str, Any]:
     }
     developer = (
         "You are the bounded outbound-sourcing stage for a venture fund. Search the web to find "
-        "candidate founders and companies matching the thesis. Do not recommend investments, invent facts, "
-        "or infer absence of VC funding. Return JSON only. Keep a candidate observation only when its source_url "
+        "candidate founders and companies matching the thesis. Do not recommend investments or invent facts. "
+        "Do not return a company when you find public VC funding evidence for it; prefer companies for which the "
+        "searched public corpus has no disclosed funding evidence, while stating that this remains uncertain and "
+        "requires human confirmation. Return JSON only. Keep a candidate observation only when its source_url "
         "matches a URL citation provided by web search. Report funding as public_vc_funding only when public evidence exists."
     )
     response = OpenAI(api_key=api_key).responses.create(
         model=LUNA_MODEL,
-        tools=[{"type": "web_search"}],
+        tools=[{"type": "web_search", "search_context_size": "medium"}],
+        include=["web_search_call.action.sources"],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "vc_brain_web_discovery",
+                "strict": True,
+                "schema": LIVE_DISCOVERY_SCHEMA,
+            }
+        },
         input=[
             {"role": "developer", "content": developer},
             {"role": "user", "content": json.dumps(prompt)},
@@ -645,12 +745,32 @@ def enrich_discovery_with_crawl(plan: dict[str, Any], discovery: dict[str, Any])
         current["source_ids"] = core.dedupe([*current.get("source_ids", []), *item.get("source_ids", [])])
     source_map = {str(item.get("source_id")): item for item in sources if isinstance(item, dict) and item.get("source_id")}
     source_map.update({str(item.get("source_id")): item for item in enriched["sources"] if item.get("source_id")})
+
+    def exact_crawl_support(item: dict[str, Any]) -> bool:
+        document = crawled_by_url.get(str(item.get("source_url") or ""))
+        if document is None:
+            # A citation that could not be crawled remains source-linked but is
+            # visibly subject to human review through the normal limitations.
+            return True
+        page = re.sub(r"\s+", " ", str(document.get("page_text") or "")).casefold()
+        quote = re.sub(r"\s+", " ", str(item.get("quote") or item.get("claim") or "")).strip().casefold()
+        return len(quote) >= 25 and quote in page
+
     evidence_map = {
         str(item.get("evidence_id")): item
         for item in discovery.get("evidence", [])
-        if isinstance(item, dict) and item.get("evidence_id")
+        if isinstance(item, dict) and item.get("evidence_id") and exact_crawl_support(item)
     }
     evidence_map.update({str(item.get("evidence_id")): item for item in enriched["evidence"] if item.get("evidence_id")})
+    for candidate in candidates.values():
+        candidate["evidence_ids"] = []
+        candidate["source_ids"] = []
+    for item in evidence_map.values():
+        candidate = candidates.get(str(item.get("candidate_id") or ""))
+        if candidate is None:
+            continue
+        candidate["evidence_ids"] = core.dedupe([*candidate["evidence_ids"], str(item["evidence_id"])])
+        candidate["source_ids"] = core.dedupe([*candidate["source_ids"], str(item["source_id"])])
     return {
         **discovery,
         "candidates": list(candidates.values()),

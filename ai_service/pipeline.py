@@ -157,10 +157,13 @@ def _fallback_extract(payload: dict[str, Any]) -> dict[str, Any]:
 def _normalise_extraction(raw: dict[str, Any], payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     company_name = _string(payload.get("company_name"), "Unknown company")
     deck_text = _string(payload.get("deck_text"))
-    valid = True
+    extracted_records = _records(raw.get("claims"))
+    # A deck with factual lines must not progress as an evidence-free review.
+    # An empty model response is treated as invalid and gets the bounded retry.
+    valid = bool(extracted_records)
     claims: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for index, item in enumerate(_records(raw.get("claims"))):
+    for index, item in enumerate(extracted_records):
         claim_type = _string(item.get("type"))
         text = _string(item.get("text"))
         span_value = item.get("source_span")
@@ -203,7 +206,13 @@ def extract_application(payload: dict[str, Any]) -> dict[str, Any]:
     retry_payload = {**payload, "span_retry": True, "previous_result": raw}
     retry_raw = router.run("extract", retry_payload, _fallback_extract)
     retry_result, _ = _normalise_extraction(retry_raw, payload)
-    return retry_result
+    if retry_result["claims"]:
+        return retry_result
+
+    # The AI call remains bounded to one retry. A deterministic fallback keeps
+    # the trust boundary intact by emitting only exact, non-instruction spans.
+    fallback_result, _ = _normalise_extraction(_fallback_extract(payload), payload)
+    return fallback_result
 
 
 def _fallback_query(payload: dict[str, Any]) -> dict[str, Any]:
