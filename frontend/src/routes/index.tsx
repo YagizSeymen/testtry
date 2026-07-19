@@ -8,6 +8,8 @@ import {
   type OriginKind,
   type TrendKind,
 } from "@/components/ds";
+import { AskFirstCheckConsole } from "@/components/ask-firstcheck";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Founder = {
   id: string;
@@ -56,6 +58,8 @@ function DashboardPage() {
   const [originFilter, setOriginFilter] = useState<OriginKind | "all">("all");
   const [sortDesc, setSortDesc] = useState(true);
   const [compact, setCompact] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     let cancel = false;
@@ -146,7 +150,12 @@ function DashboardPage() {
   }, [founders]);
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10 md:px-10 md:py-12">
+    <div
+      className={
+        "mx-auto max-w-[1200px] px-6 py-10 md:px-10 md:py-12 " +
+        (askOpen && !isMobile ? "pr-[440px]" : "")
+      }
+    >
       <div className="grid gap-8">
         {/* Header */}
         <header className="fancy-card relative grid gap-4 overflow-hidden rounded-3xl border border-[var(--ink)]/10 bg-[var(--surface-hero)] p-6 shadow-[0_40px_90px_-70px_rgba(27,37,94,0.8)] md:grid-cols-[1.2fr_0.8fr] md:p-8">
@@ -330,6 +339,23 @@ function DashboardPage() {
         </div>
       </section>
       </div>
+      <button
+        type="button"
+        onClick={() => setAskOpen((v) => !v)}
+        title="Ask FirstCheck"
+        className="fixed bottom-6 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-[var(--signal)]/35 bg-[var(--signal)] text-[var(--paper)] shadow-[0_18px_40px_-18px_rgba(61,90,254,0.75)] transition-transform hover:-translate-y-0.5"
+        aria-label="Ask FirstCheck"
+      >
+        {(() => {
+          const Icon = AGENT_ICON["Extractor Agent"];
+          return <Icon size={18} strokeWidth={2} aria-hidden />;
+        })()}
+      </button>
+      <AskFirstCheckConsole
+        open={askOpen}
+        onOpenChange={setAskOpen}
+        founders={founders}
+      />
     </div>
   );
 }
