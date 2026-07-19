@@ -1,1 +1,8 @@
--r backend/requirements.txt
+# Keep this deployment entrypoint flat: Vercel's Python runtime parses the root
+# requirements file directly and does not support this project's nested `-r`
+# include from backend/requirements.txt.
+certifi>=2024.0.0
+fastapi>=0.115,<1.0
+python-dotenv>=1.0,<2.0
+langgraph>=1.0,<2.0
+openai>=2.0,<3.0
