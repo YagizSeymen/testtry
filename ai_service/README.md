@@ -1,15 +1,74 @@
 # AI Service
 
-AI service implementation for the bounded workflow described by `api-contract.json` (`0.4.0`).
+The AI lane for VentureIntelligence. The product contract is
+[`../api-contract.json`](../api-contract.json); [`../steps.md`](../steps.md) is
+the behavioral source of truth.
 
-## Run
+## Boundary
 
-```bash
-python3 -m ai_service.server --port 8001
+The backend owns SQLite Memory, founder identity and score persistence, all
+`/api` routes, the deterministic Decision Brief, audit/metrics, and the human
+decision. This service owns only the bounded analysis calls and can be used in
+two equivalent ways:
+
+- import the functions in `ai_service.pipeline` from the backend process; or
+- run this server and call its internal `/v1/ai/*` endpoints.
+
+The frontend must never call this service directly.
+
+## Fixed DAG
+
+`run_application_pipeline` is a LangGraph state machine:
+
+```text
+extract [Luna]
+  -> screen, 3 independent axes [Terra]
+  -> diligence, per-claim truth-gap [Terra]
+  -> memo, committed claims only [Terra]
+  -> adversary, one pass [Terra]              optional P1
+  -> adversary verification, one batch [Terra] optional P1
+  -> backend deterministic Decision Brief
+  -> human approve or reject
 ```
 
-For the deterministic integration mode used by frontend/backend while they work
-in parallel, no API key is required. To enable the model-backed runtime:
+There is no swarm, agent conversation, debate loop, or AI winner declaration.
+The human gate is outside the graph.
+
+## Internal endpoints
+
+All are `POST` under `/v1/ai` and have exact schemas in `api-contract.json`:
+
+- `/extract`
+- `/query`
+- `/screen`
+- `/diligence`
+- `/memo`
+- `/adversary`
+- `/adversary/verify`
+- `/application/run` (integration helper for the fixed DAG)
+
+The existing research, crawler, sourcing, and legacy `/v1/ai/*` helpers remain
+available while the backend is being wired. They are not product-contract
+routes and must not be used by the frontend.
+
+## Guardrails
+
+- The extractor treats decks as untrusted data, requires an exact source span,
+  retries once, then leaves a failed claim's span null.
+- A null-span claim cannot become supported or appear in `recommendation.based_on`.
+- The judge resolves IDs against supplied Memory Signals before applying trust.
+- The adversary persona is deterministic from the weakest of the three axes.
+- An adversarial objection without valid evidence is converted to speculation;
+  the judge verifies all evidence-backed objections in one batch.
+- The service returns no chain-of-thought and makes no investment decision.
+
+## Models and modes
+
+`gpt-5.6-luna` handles extraction and query parsing. `gpt-5.6-terra` handles
+screening, diligence, memo writing, the counter-case, and its verification.
+
+Deterministic mode is the default and requires no key. It is used for fixtures,
+tests, and parallel backend/frontend work. Model mode is opt-in:
 
 ```bash
 python3 -m pip install -r ai_service/requirements.txt
@@ -17,104 +76,6 @@ export VC_BRAIN_LLM_MODE=openai
 export OPENAI_API_KEY=your_key_here
 python3 -m ai_service.server --port 8001
 ```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:8001/health
-```
-
-## Endpoints
-
-All endpoints are under `/v1/ai`:
-
-- `POST /sourcing/plan`
-- `POST /research/crawl`
-- `POST /sourcing/discover`
-- `POST /sourcing/rank`
-- `POST /sourcing/run`
-- `POST /founders/memory/upsert`
-- `POST /founders/memory/get`
-- `POST /founders/memory/resolve`
-- `POST /research/plan`
-- `POST /evidence/extract`
-- `POST /evidence/verify`
-- `POST /screen/score`
-- `POST /memo/write`
-- `POST /adversary/write`
-- `POST /truth-gap/verify`
-- `POST /verdict/brief`
-
-The service intentionally does not include a swarm, debate loop, or LLM winner-decider. It uses a single counter-case pass, verifies objections through the truth-gap Judge, and returns an optional non-authoritative verdict brief for human readability.
-
-## Orchestration
-
-The service uses LangGraph as a bounded state-machine orchestrator. It does not
-use Google ADK or LangChain: neither is needed for this fixed, inspectable DAG.
-
-```text
-Investor thesis
-  -> sourcing plan [Luna]
-  -> cited web discovery [Luna] or supplied crawler documents
-  -> persistent Founder Memory update
-  -> evidence-gated candidate ranking [deterministic]
-  -> human activation / inbound application
-
-Known deal
-  -> research plan [Luna]
-  -> evidence extraction per source [Luna, parallel]
-  -> Memory merge [barrier]
-  -> claim Trust Score + contradiction validation [Terra]
-  -> three independent axes: Founder | Market | Idea vs. Market [Terra]
-  -> memo [Terra]
-  -> one counter-case [Terra]
-  -> truth-gap Judge [Terra]
-  -> optional verdict brief [Luna]
-  -> human decision outside the graph
-```
-
-`ai_service/sourcing_orchestration.py` implements the sourcing LangGraph used by
-`POST /sourcing/run`; `ai_service/orchestration.py` implements deal diligence.
-Crawler fetches and
-document evidence extraction fan out only for independent URLs/pages, then merge
-at Memory barriers. Candidate ranking, claim validation, screening, memo, and
-adversarial review stay sequential because they depend on verified prior state.
-
-## Model Routing
-
-| Stage | Model | Reason |
-| --- | --- | --- |
-| Thesis and sourcing plan | `gpt-5.6-luna` | High-volume query decomposition |
-| Candidate discovery | `gpt-5.6-luna` with web search | Cited public-web lead finding |
-| Research plan | `gpt-5.6-luna` | High-volume query planning |
-| Evidence extraction | `gpt-5.6-luna` | Parallel, source-local structured extraction |
-| Claim trust validation | `gpt-5.6-terra` | Per-claim verification and contradiction handling |
-| Screening | `gpt-5.6-terra` | Cross-evidence investment reasoning |
-| Memo | `gpt-5.6-terra` | Evidence-backed synthesis |
-| Counter-case | `gpt-5.6-terra` | Strong red-team reasoning |
-| Truth-gap Judge | `gpt-5.6-terra` | Claim-to-evidence adjudication |
-| Verdict brief | `gpt-5.6-luna` | Fast, non-authoritative summarization |
-
-The deterministic fallback remains the default. It lets frontend and backend
-integrate without API credentials, while production/demo mode is activated with
-`VC_BRAIN_LLM_MODE=openai`.
-
-## Development Notes
-
-- The default integration mode has no third-party runtime dependencies.
-- The core functions are in `ai_service/core.py`.
-- Bounded public crawling is in `ai_service/crawler.py`.
-- Thesis-driven sourcing is in `ai_service/sourcing.py`.
-- Persistent Founder Score Memory is in `ai_service/memory.py`; configure a durable location with `VC_BRAIN_MEMORY_PATH` in deployment.
-- Founder identity references are intentionally provisional when only a normalized name is available; backend or a reviewer must confirm ambiguous merges.
-- The OpenAI model router is in `ai_service/model_router.py`.
-- The LangGraph orchestration is in `ai_service/orchestration.py`.
-- The HTTP boundary is in `ai_service/server.py`.
-- Outputs are deterministic so frontend/backend can mock and integrate reliably.
-- The weakest of `Founder`, `Market`, and `Idea vs. Market` is exposed as `weakest_opportunity_axis`; it maps to a functional counter-case focus, not a persona.
-- `no previous VC funding` is never inferred from silence: ranking reports only `no_public_evidence` and requires human confirmation.
-- `sourcing.run` and the LangGraph deal workflow return audit-safe `audit_events` with stage/model/reference IDs. They never expose model chain-of-thought.
-- The local Founder Memory store is an AI-service MVP adapter. Backend owns production persistence, candidate activation/outreach, human decisions, and source-channel outcome feedback.
 
 ## Test
 

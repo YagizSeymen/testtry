@@ -87,8 +87,9 @@ class FounderMemoryTest(unittest.TestCase):
 
     def test_cold_start_is_provisional_not_negative_and_score_persists(self):
         cold = memory.endpoint_founder_memory_get({"founder_name": "New Founder"})
-        self.assertEqual(cold["founder_score"]["score"], 50)
-        self.assertEqual(cold["founder_score"]["confidence"], "low")
+        self.assertEqual(cold["founder_score"]["score"], 35)
+        self.assertEqual(cold["founder_score"]["band"], 30)
+        self.assertEqual(cold["founder_score"]["trend"], "flat")
         self.assertIn("not a negative judgment", cold["founder_score"]["uncertainty"][0])
 
         first = memory.endpoint_founder_memory_upsert(
@@ -109,10 +110,42 @@ class FounderMemoryTest(unittest.TestCase):
             }
         )
         self.assertGreater(second["founder_score"]["score"], first["founder_score"]["score"])
+        self.assertIn(second["founder_score"]["trend"], {"up", "flat", "down"})
         self.assertGreaterEqual(len(second["score_history"]), 2)
         self.assertEqual(len(second["milestones"]), 1)
         self.assertEqual(second["evidence"][0]["founder_id"], second["founder_id"])
         self.assertIn("source_url", second["evidence"][0])
+
+    def test_identity_and_score_follow_the_steps_formula(self):
+        self.assertEqual(
+            memory.founder_reference("Ada.Example")["founder_id"],
+            memory.founder_reference("Ada Example")["founder_id"],
+        )
+        profile = memory.endpoint_founder_memory_upsert(
+            {
+                "founder_name": "Ada Example",
+                "snapshot_ts": "2026-07-19T00:00:00Z",
+                "evidence": [
+                    {
+                        "evidence_id": "sig_github",
+                        "claim": "Shipped a public repository.",
+                        "source": "github",
+                        "captured_at": "2026-07-18T00:00:00Z",
+                    },
+                    {
+                        "evidence_id": "sig_old_hn",
+                        "claim": "Published a technical launch note.",
+                        "source": "hn",
+                        "captured_at": "2026-06-18T00:00:00Z",
+                    },
+                ],
+            }
+        )
+        # 35 + 8*2 sources + 4*1 recent signal + 2*2 signals = 59.
+        self.assertEqual(profile["founder_score"]["score"], 59)
+        self.assertEqual(profile["founder_score"]["band"], 30)
+        self.assertEqual(profile["founder_score"]["trend"], "flat")
+        self.assertEqual(profile["score_history"][-1], {"ts": "2026-07-19T00:00:00Z", "score": 59, "band": 30})
 
 
 class CrawlerGuardrailTest(unittest.TestCase):

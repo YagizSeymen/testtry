@@ -1,0 +1,1 @@
+"""FirstCheck backend application package."""

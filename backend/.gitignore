@@ -1,0 +1,7 @@
+backend/firstcheck.db
+backend/.venv/
+backend/**/__pycache__/
+backend/.pytest_cache/
+*.pyc
+.Python
+venv/

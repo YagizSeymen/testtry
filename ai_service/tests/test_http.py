@@ -126,6 +126,58 @@ class HttpPipelineTest(unittest.TestCase):
         )
         self.assertIn("summary", brief)
 
+    def test_product_contract_internal_ai_routes(self):
+        deck_text = (
+            "Founder: Maya Chen\n"
+            "NeuralKit has reached $50K in monthly recurring revenue.\n"
+            "Our initial customers are AI infrastructure teams.\n"
+            "We shipped a model observability platform."
+        )
+        signals = [
+            {
+                "signal_id": "sig_pre_revenue",
+                "ts": "2026-07-01T00:00:00Z",
+                "source": "synthetic",
+                "text": "The founder said NeuralKit was pre-revenue.",
+                "url": None,
+            },
+            {
+                "signal_id": "sig_market",
+                "ts": "2026-07-02T00:00:00Z",
+                "source": "synthetic",
+                "text": "AI infrastructure teams are increasing observability spend.",
+                "url": None,
+            },
+        ]
+        thesis = {
+            "sectors": ["AI infrastructure"],
+            "stage": "pre-seed",
+            "geo": ["Europe"],
+            "check_size": 100000,
+            "risk_appetite": "medium",
+        }
+        extracted = self.post("/v1/ai/extract", {"company_name": "NeuralKit", "deck_text": deck_text})
+        self.assertEqual(extracted["founder_name"], "Maya Chen")
+        self.assertTrue(all(claim["source_span"] in deck_text for claim in extracted["claims"] if claim["source_span"]))
+        query = self.post("/v1/ai/query", {"q": "technical founder AI infra in Europe, shipped last 30 days, no prior VC", "thesis": thesis})
+        self.assertFalse(query["prior_vc"])
+        result = self.post(
+            "/v1/ai/application/run",
+            {
+                "company_name": "NeuralKit",
+                "deck_text": deck_text,
+                "signals": signals,
+                "founder_score": 59,
+                "band": 22,
+                "trend": "up",
+                "thesis": thesis,
+                "include_adversary": True,
+            },
+        )
+        self.assertEqual(result["axes"]["founder"]["trend"], "up")
+        self.assertIsNotNone(result["adversarial"])
+        self.assertNotIn("decision", result)
+
 
 if __name__ == "__main__":
     unittest.main()
